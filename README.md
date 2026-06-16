@@ -15,6 +15,15 @@ English | [日本語](README.ja.md)
 
 ---
 
+## How it works
+
+![Roulin pipeline](docs/pipeline.png)
+
+Authoring tools push assets to `roulin-server`, which builds revisions and publishes them as content-addressed blobs to S3 or any compatible CDN.
+At runtime, `roulin-fetch` pulls blobs over HTTP/2 into `roulin-core`'s VFS, exposed to each engine through a thin plugin layer — Unity today, Unreal and Godot by design.
+
+---
+
 ## Highlights
 
 **Blob-level deduplication**</br>

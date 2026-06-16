@@ -14,6 +14,15 @@
 
 ---
 
+## 全体像
+
+![Roulin pipeline](docs/pipeline.png)
+
+オーサリング側のアセットを `roulin-server` が取り込み、リビジョンとしてビルド・発行。コンテンツアドレス型 blob として S3 / CDN に publish されます。
+実機側では `roulin-fetch` が HTTP/2 で blob を取得し、`roulin-core` の VFS に展開。各エンジンには薄いプラグイン層でつながり、Unity は現行対応、Unreal / Godot も同じ設計で接続できます。
+
+---
+
 ## Highlights
 
 **Blob レベルの重複排除**</br>
