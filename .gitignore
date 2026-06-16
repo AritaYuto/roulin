@@ -1,0 +1,94 @@
+# ===== C++ =====
+/build/
+/out/
+/cmake-build-*/
+CMakeCache.txt
+CMakeFiles/
+CMakeScripts/
+Testing/
+Makefile
+cmake_install.cmake
+install_manifest.txt
+CTestTestfile.cmake
+_deps/
+*.o
+*.a
+*.so
+*.so.[0-9]*
+*.dylib
+*.dll
+*.exe
+
+# ===== Go =====
+vendor/
+*.test
+*.out
+
+
+# ===== Unity =====
+[Ll]ibrary/
+[Tt]emp/
+[Oo]bj/
+[Ll]ogs/
+[Mm]emoryCaptures/
+[Rr]ecordings/
+[Uu]serSettings/
+*.pidb
+*.suo
+*.user
+*.sln
+*.csproj
+*.unityproj
+*.booproj
+ExportedObj/
+.consulo/
+*.csproj.user
+*.pidb.meta
+*.pdb.meta
+*.mdb.meta
+crashlytics-build.properties
+DummyDLLs/
+FileSystemSimulation/
+
+# ===== IDE =====
+.idea/
+*.code-workspace
+.vs/
+*.swp
+*.swo
+*~
+
+# ===== OS =====
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# ===== Secrets / Env =====
+.env
+.env.local
+*.key
+*.pem
+*.p12
+
+# ===== Android / Gradle =====
+fetch/android/kotlin/.gradle/
+fetch/android/kotlin/build/
+fetch/android/kotlin/local.properties
+*.aar
+
+# ===== Roulin build outputs =====
+dist/
+*.parcel/
+logs/
+testdata/
+minio-data/
+tools/roulin/roulin-server
+tools/roulin/roulin-cli
+tools-dev/build-cpp/build-cpp
+tools-dev/generate-fbs/generate-fbs
+tools-dev/pipeline-verify/pipeline-verify

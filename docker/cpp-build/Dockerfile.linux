@@ -1,0 +1,22 @@
+# Linux x86_64 build env. Used by build-cpp when host != Linux.
+
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential \
+        cmake \
+        git \
+        ca-certificates \
+        pkg-config \
+        libcurl4-openssl-dev \
+        golang-go \
+    && rm -rf /var/lib/apt/lists/*
+
+# CI runners mount /src as a different UID than the container's root user.
+# Allow git operations on the mounted source tree without ownership checks.
+RUN git config --global --add safe.directory '*'
+
+WORKDIR /src/tools-dev/build-cpp
+ENTRYPOINT ["go", "run", ".", "linux"]

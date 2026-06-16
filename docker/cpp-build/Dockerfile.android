@@ -1,0 +1,33 @@
+# Android cross-build env. NDK r26d (LTS) → /opt/android-ndk; the toolchain
+# files in tools-dev/build-cpp/toolchains/ pick it up via $ANDROID_NDK_HOME.
+
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV ANDROID_NDK_VERSION=r26d
+ENV ANDROID_NDK_HOME=/opt/android-ndk
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential \
+        cmake \
+        git \
+        ca-certificates \
+        curl \
+        unzip \
+        golang-go \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN curl -fsSLo /tmp/ndk.zip \
+        https://dl.google.com/android/repository/android-ndk-${ANDROID_NDK_VERSION}-linux.zip \
+    && unzip -q /tmp/ndk.zip -d /opt \
+    && mv /opt/android-ndk-${ANDROID_NDK_VERSION} ${ANDROID_NDK_HOME} \
+    && rm /tmp/ndk.zip
+
+ENV PATH=${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin:${PATH}
+
+# CI runners mount /src as a different UID than the container's root user.
+# Allow git operations on the mounted source tree without ownership checks.
+RUN git config --global --add safe.directory '*'
+
+WORKDIR /src/tools-dev/build-cpp
+ENTRYPOINT ["go", "run", ".", "android"]

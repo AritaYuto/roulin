@@ -1,0 +1,11 @@
+{
+  "name": "com.roulin.unity",
+  "version": "0.1.0",
+  "displayName": "Roulin",
+  "description": "HTTP/2-first content-addressed asset delivery for Unity. Replaces Addressables.",
+  "unity": "2022.3",
+  "dependencies": {
+    "com.unity.addressables": "1.21.20",
+    "com.cysharp.unitask":    "https://github.com/Cysharp/UniTask.git?path=src/UniTask/Assets/Plugins/UniTask#2.5.10"
+  }
+}

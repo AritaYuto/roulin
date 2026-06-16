@@ -1,0 +1,132 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  verify-fbs:
+    name: Verify FlatBuffers code is in sync
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive   # third_party/flatbuffers (flatc source)
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+
+      - name: Regenerate
+        working-directory: tools-dev/generate-fbs
+        run: go run .
+
+      - name: Fail if generated code drifted
+        run: |
+          if ! git diff --exit-code -- core/generated tools/roulin/internal/storage/parcel/generated; then
+            echo "::error::FlatBuffers generated code is out of date. Run '(cd tools-dev/generate-fbs && go run .)' locally and commit the result."
+            exit 1
+          fi
+
+  cpp-build:
+    name: C++ Build & Test (Ubuntu)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive   # third_party/flatbuffers headers
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libcurl4-openssl-dev
+
+      - name: Configure CMake
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build --parallel $(nproc)
+
+      - name: Run C++ unit tests
+        run: ctest --test-dir build --output-on-failure --parallel $(nproc)
+
+  go-test:
+    name: Go Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+
+      - name: Build & test roulin
+        working-directory: tools/roulin
+        run: go build ./... && go test ./...
+
+  pipeline:
+    name: Full Pipeline (Go → C++)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive   # third_party/flatbuffers headers
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libcurl4-openssl-dev
+
+      - name: Build C++ (pipeline-test binaries)
+        run: |
+          cmake -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --parallel $(nproc) --target pipeline-test fetch-pipeline-test
+
+      - name: Build roulin-server
+        working-directory: tools/roulin
+        run: go build -o roulin-server ./cmd/roulin-server
+
+      - name: Run pipeline verification
+        working-directory: tools-dev/pipeline-verify
+        run: go run . build
+
+  go-integration-test:
+    name: Go Integration Test (Docker)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+
+      - name: Start MinIO
+        run: docker compose up -d minio minio-setup
+
+      - name: Wait for MinIO bucket initialisation
+        run: |
+          for i in $(seq 1 30); do
+            docker compose ps minio-setup | grep -q "Exited (0)" && break
+            sleep 2
+          done
+          docker compose logs minio-setup
+
+      - name: Run integration tests
+        working-directory: tools/roulin
+        run: go test -v ./test/...
+        env:
+          ROULIN_INTEGRATION:         "1"
+          AWS_ACCESS_KEY_ID:           minioadmin
+          AWS_SECRET_ACCESS_KEY:       minioadmin
+          AWS_REGION:                  us-east-1
+          ROULIN_TEST_S3_ENDPOINT:    http://localhost:9000
+
+      - name: Stop services
+        if: always()
+        run: docker compose down

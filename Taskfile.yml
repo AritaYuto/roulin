@@ -1,0 +1,364 @@
+# Task runner for roulin.
+#
+# Install go-task once:    go install github.com/go-task/task/v3/cmd/task@latest
+# (or `brew install go-task`, `scoop install task`, etc.)
+#
+# Show all tasks:          task
+# Run a task:              task <name> [VAR=value ...]
+
+version: '3'
+
+dotenv: ['.env']
+
+vars:
+  TOOLS_DIR: tools/roulin
+  BUILD_CPP_DIR: tools-dev/build-cpp
+  DEFAULT_BASE_URL: http://localhost:8765
+
+tasks:
+  default:
+    desc: List available tasks
+    cmds:
+      - task --list
+    silent: true
+
+  # ===========================================================================
+  # Go: roulin-cli + roulin-server (tools/roulin)
+  # ===========================================================================
+
+  go:build:
+    desc: Build roulin-cli and roulin-server binaries
+    dir: '{{.TOOLS_DIR}}'
+    cmds:
+      - go build ./...
+
+  go:test:
+    desc: Run Go unit tests
+    dir: '{{.TOOLS_DIR}}'
+    cmds:
+      - go test ./...
+
+  go:test:integration:
+    desc: Run Go integration tests (requires `task dev:up:detach` first)
+    dir: '{{.TOOLS_DIR}}'
+    cmds:
+      - go test -tags integration ./...
+
+  go:vet:
+    desc: Run `go vet` on all packages
+    dir: '{{.TOOLS_DIR}}'
+    cmds:
+      - go vet ./...
+
+  # ===========================================================================
+  # Dev stack: MinIO + roulin-server (compose.yml)
+  # ===========================================================================
+
+  dev:up:
+    desc: Start MinIO + roulin-server in foreground
+    cmds:
+      - docker compose up
+
+  dev:up:detach:
+    desc: Start MinIO + roulin-server in background
+    cmds:
+      - docker compose up -d
+
+  dev:rebuild:
+    desc: Rebuild roulin-server image, then start (foreground)
+    cmds:
+      - docker compose up --build
+
+  dev:rebuild:detach:
+    desc: Rebuild roulin-server image, then start (background)
+    cmds:
+      - docker compose up --build -d
+
+  dev:down:
+    desc: Stop and remove the dev stack
+    cmds:
+      - docker compose down
+
+  dev:logs:
+    desc: Tail roulin-server logs
+    cmds:
+      - docker compose logs -f roulin-server
+
+  # ===========================================================================
+  # Dev with peer storage: local roulin-server fronting an S3-compatible
+  # store on a peer machine (compose.peer.yml). Credentials + endpoint come
+  # from .env or shell. For foreground / rebuild use raw
+  # `docker compose -f compose.peer.yml`.
+  # ===========================================================================
+
+  dev:peer:up:
+    desc: Start local roulin-server pointed at peer-hosted storage (background)
+    cmds:
+      - docker compose -f compose.peer.yml up -d
+
+  dev:peer:rebuild:
+    desc: Rebuild roulin-server image, then start pointed at peer-hosted storage (foreground)
+    cmds:
+      - docker compose -f compose.peer.yml up --build
+
+  dev:peer:down:
+    desc: Stop the peer-storage roulin-server
+    cmds:
+      - docker compose -f compose.peer.yml down
+
+  dev:peer:logs:
+    desc: Tail peer-storage roulin-server logs
+    cmds:
+      - docker compose -f compose.peer.yml logs -f roulin-server
+
+  # ===========================================================================
+  # C++ libraries cross-build (roulin-core + roulin-fetch)
+  #
+  # tools-dev/build-cpp auto-detects host==target and skips the toolchain file
+  # for native builds. Cross builds need the relevant toolchain in PATH/env
+  # (NDK for android, Xcode for apple). For Linux-host cross-compile to
+  # non-native targets, see docker/cpp-build/. Windows requires a Windows
+  # host with MSVC + Windows SDK (no Docker cross-build path).
+  # ===========================================================================
+
+  cpp:linux:
+    desc: Build C++ libs for Linux x86_64 (release)
+    dir: '{{.BUILD_CPP_DIR}}'
+    cmds:
+      - go run . linux x86_64 --release
+
+  cpp:linux:docker:
+    desc: Build C++ libs for Linux x86_64 via Docker (for macOS/Windows hosts)
+    cmds:
+      - docker build --platform linux/amd64 -f docker/cpp-build/Dockerfile.linux -t roulin-cpp-linux docker/cpp-build
+      - rm -rf build/linux-x86_64-release
+      - docker run --rm --platform linux/amd64 -v {{.TASKFILE_DIR}}:/src roulin-cpp-linux x86_64 --release
+
+  cpp:linux:test:
+    desc: Build + ctest C++ libs for Linux x86_64
+    dir: '{{.BUILD_CPP_DIR}}'
+    cmds:
+      - go run . linux x86_64 --test
+
+  cpp:windows:
+    desc: Build C++ libs for Windows x86_64 via MSVC (requires Windows host with Visual Studio + Windows SDK)
+    dir: '{{.BUILD_CPP_DIR}}'
+    cmds:
+      - go run . windows x86_64 --release
+      - mkdir -p {{.TASKFILE_DIR}}/plugins/unity/Runtime/Plugins/Windows/x86_64
+      - cp {{.TASKFILE_DIR}}/dist/windows-x86_64/lib/roulin_core.dll {{.TASKFILE_DIR}}/plugins/unity/Runtime/Plugins/Windows/x86_64/roulin_core.dll
+      - cp {{.TASKFILE_DIR}}/dist/windows-x86_64/lib/roulin_fetch.dll {{.TASKFILE_DIR}}/plugins/unity/Runtime/Plugins/Windows/x86_64/roulin_fetch.dll
+
+  cpp:android:
+    desc: Build C++ libs + Android Kotlin AAR for Android arm64 (needs NDK + JDK 17 + Gradle wrapper)
+    dir: '{{.BUILD_CPP_DIR}}'
+    cmds:
+      - go run . android arm64 --release
+      - cd {{.TASKFILE_DIR}}/fetch/android/kotlin && ./gradlew assembleRelease
+      - cp {{.TASKFILE_DIR}}/fetch/android/kotlin/build/outputs/aar/*.aar {{.TASKFILE_DIR}}/dist/android-arm64/lib/
+      - mkdir -p {{.TASKFILE_DIR}}/plugins/unity/Runtime/Plugins/Android/libs/arm64-v8a
+      - cp {{.TASKFILE_DIR}}/dist/android-arm64/lib/libroulin_core.so {{.TASKFILE_DIR}}/plugins/unity/Runtime/Plugins/Android/libs/arm64-v8a/libroulin_core.so
+      - cp {{.TASKFILE_DIR}}/dist/android-arm64/lib/libroulin_fetch.so {{.TASKFILE_DIR}}/plugins/unity/Runtime/Plugins/Android/libs/arm64-v8a/libroulin_fetch.so
+      - cp {{.TASKFILE_DIR}}/dist/android-arm64/lib/*.aar {{.TASKFILE_DIR}}/plugins/unity/Runtime/Plugins/Android/libs/
+
+  cpp:android:docker:
+    desc: Build C++ libs + Android Kotlin AAR for Android arm64 via Docker (needs JDK 17 + Android SDK + Gradle wrapper on host)
+    vars:
+      ANDROID_SDK_DIR: '{{.ANDROID_HOME | default (printf "%s/Library/Android/sdk" .HOME)}}'
+    cmds:
+      - docker build --platform linux/amd64 -f docker/cpp-build/Dockerfile.android -t roulin-cpp-android docker/cpp-build
+      - rm -rf build/android-arm64-release
+      - docker run --rm --platform linux/amd64 -v {{.TASKFILE_DIR}}:/src roulin-cpp-android arm64 --release
+      - sudo chown -R "$(id -u):$(id -g)" dist build
+      - echo "sdk.dir={{.ANDROID_SDK_DIR}}" > fetch/android/kotlin/local.properties
+      - cd fetch/android/kotlin && ./gradlew assembleRelease
+      - cp fetch/android/kotlin/build/outputs/aar/*.aar dist/android-arm64/lib/
+      - mkdir -p plugins/unity/Runtime/Plugins/Android/libs/arm64-v8a
+      - cp dist/android-arm64/lib/libroulin_core.so plugins/unity/Runtime/Plugins/Android/libs/arm64-v8a/libroulin_core.so
+      - cp dist/android-arm64/lib/libroulin_fetch.so plugins/unity/Runtime/Plugins/Android/libs/arm64-v8a/libroulin_fetch.so
+      - cp dist/android-arm64/lib/*.aar plugins/unity/Runtime/Plugins/Android/libs/
+
+  cpp:macos:
+    desc: Build C++ libs for macOS arm64 (release; needs Xcode SDK)
+    dir: '{{.BUILD_CPP_DIR}}'
+    cmds:
+      - go run . macos arm64 --release
+      - mkdir -p {{.TASKFILE_DIR}}/plugins/unity/Runtime/Plugins/macOS
+      - cp {{.TASKFILE_DIR}}/dist/macos-arm64/lib/libroulin_core.dylib {{.TASKFILE_DIR}}/plugins/unity/Runtime/Plugins/macOS/libroulin_core.dylib
+      - cp {{.TASKFILE_DIR}}/dist/macos-arm64/lib/libroulin_fetch.dylib {{.TASKFILE_DIR}}/plugins/unity/Runtime/Plugins/macOS/libroulin_fetch.dylib
+
+  cpp:ios:
+    desc: Build C++ libs for iOS arm64 (release; needs Xcode iOS SDK)
+    dir: '{{.BUILD_CPP_DIR}}'
+    cmds:
+      - go run . ios arm64 --release
+      - mkdir -p {{.TASKFILE_DIR}}/plugins/unity/Runtime/Plugins/iOS
+      - cp {{.TASKFILE_DIR}}/dist/ios-arm64/lib/libroulin-core.a {{.TASKFILE_DIR}}/plugins/unity/Runtime/Plugins/iOS/libroulin-core.a
+      - cp {{.TASKFILE_DIR}}/dist/ios-arm64/lib/libroulin-fetch.a {{.TASKFILE_DIR}}/plugins/unity/Runtime/Plugins/iOS/libroulin-fetch.a
+      - cp {{.TASKFILE_DIR}}/dist/ios-arm64/lib/libroulin-fetch-apple.a {{.TASKFILE_DIR}}/plugins/unity/Runtime/Plugins/iOS/libroulin-fetch-apple.a
+      - cp {{.TASKFILE_DIR}}/dist/ios-arm64/lib/libroulin-fetch-share.a {{.TASKFILE_DIR}}/plugins/unity/Runtime/Plugins/iOS/libroulin-fetch-share.a
+
+  # ===========================================================================
+  # FlatBuffers code regen (rare; only needed when core/schema/*.fbs changes)
+  # ===========================================================================
+
+  fbs:gen:
+    desc: Regenerate FlatBuffers Go/C++ stubs from core/schema/*.fbs
+    dir: tools-dev/generate-fbs
+    cmds:
+      - go run .
+
+  # ===========================================================================
+  # End-to-end pipeline-verify (Go import → C++ ac_parcel_open round trip)
+  # ===========================================================================
+
+  pipeline:verify:
+    desc: Verify Go-side import is readable by C++ pipeline-test
+    dir: tools-dev/pipeline-verify
+    cmds:
+      - go run .
+
+  # ===========================================================================
+  # Server-side ops (against a running roulin-server)
+  #
+  #   task inspect rev=20260427183144
+  #   task inspect rev=... meta=1                       # also fetch each blob's blob_meta
+  #   task inspect:json rev=... base=http://localhost:8765
+  #   task inspect:json rev=... meta=1                  # JSON output, with meta
+  #   task revisions:list remote=s3://roulin-test
+  # ===========================================================================
+
+  inspect:
+    desc: 'Walk a deployed Parcel; rev=<rev> required, optional base=<url>, meta=1 to include blob_meta'
+    dir: '{{.TOOLS_DIR}}'
+    requires:
+      vars: [rev]
+    cmds:
+      - go run ./cmd/roulin-cli inspect-parcel --base-url {{.base | default .DEFAULT_BASE_URL}} --revision {{.rev}} {{if .meta}}--with-meta{{end}}
+
+  inspect:json:
+    desc: 'Same as inspect, JSON output; meta=1 to include blob_meta'
+    dir: '{{.TOOLS_DIR}}'
+    requires:
+      vars: [rev]
+    cmds:
+      - go run ./cmd/roulin-cli inspect-parcel --base-url {{.base | default .DEFAULT_BASE_URL}} --revision {{.rev}} --json {{if .meta}}--with-meta{{end}}
+
+  revisions:list:
+    desc: List revisions on a remote; remote=s3://bucket/prefix required
+    dir: '{{.TOOLS_DIR}}'
+    requires:
+      vars: [remote]
+    cmds:
+      - go run ./cmd/roulin-cli revisions list --remote {{.remote}}
+
+  # ===========================================================================
+  # USB device watch: auto-pair whenever game restarts (leave running in background)
+  #
+  # device:watch     — game connects to host IP over WiFi after pairing
+  # device:watch:vpn — Android uses adb reverse (localhost) for VPN environments
+  # ===========================================================================
+
+  device:watch:
+    desc: Watch for USB devices and auto-pair (game connects via WiFi). Pass rev=<sha> to send a revision hint.
+    dir: '{{.TOOLS_DIR}}'
+    cmds:
+      - >
+        go run ./cmd/roulin-cli watch
+        {{if .host}}--host {{.host}}{{end}}
+        {{if .rev}}--revision {{.rev}}{{end}}
+
+  device:watch:vpn:
+    desc: Watch for USB devices and auto-pair — Android connects via USB tunnel (VPN-safe). Pass rev=<sha> to send a revision hint.
+    dir: '{{.TOOLS_DIR}}'
+    cmds:
+      - >
+        go run ./cmd/roulin-cli watch --usb
+        {{if .host}}--host {{.host}}{{end}}
+        {{if .rev}}--revision {{.rev}}{{end}}
+
+  # ===========================================================================
+  # CI orchestration via gh CLI (requires `gh auth login` once).
+  #
+  # Use these when you want to build a platform you can't compile locally
+  # (e.g. Windows from macOS, iOS from Linux). The workflow is manual on
+  # purpose — pushes do not trigger it, only `task ci:build` or a v*.*.* tag.
+  # ===========================================================================
+
+  ci:build:
+    desc: 'Trigger GitHub Actions native-libs build; usage: task ci:build [branch=<branch>]'
+    vars:
+      BRANCH: '{{.branch | default "main"}}'
+    cmds:
+      - gh workflow run build.yml --ref {{.BRANCH}} -f branch={{.BRANCH}} -f platforms=all
+      - echo "Triggered build on {{.BRANCH}}. Watch progress with 'task ci:status' or 'gh run watch'."
+
+  ci:status:
+    desc: Show recent build.yml workflow runs on the current branch
+    cmds:
+      - gh run list --workflow build.yml --branch $(git branch --show-current) --limit 5
+
+  # ===========================================================================
+  # Artifact download from a successful CI run. Mirrors the layout `task
+  # cpp:<platform>` produces locally so downstream tasks (Unity plugin copy
+  # etc.) don't care whether the binary came from a local build or CI.
+  # ===========================================================================
+
+  artifacts:
+    desc: 'Download CI artifact for one platform and install into Plugins/; usage: task artifacts platform=<name> [run=<run-id>]'
+    cmds:
+      - |
+        if [ -z "{{.platform}}" ]; then
+          echo "usage: task artifacts platform=<linux-x86_64|android-arm64|windows-x86_64|macos-arm64|ios-arm64> [run=<id>]"
+          exit 1
+        fi
+        RUN="{{.run}}"
+        if [ -z "$RUN" ]; then
+          RUN=$(gh run list --workflow build.yml --branch "$(git branch --show-current)" --status success --limit 1 --json databaseId -q '.[0].databaseId')
+          if [ -z "$RUN" ]; then
+            echo "No successful build.yml run found on the current branch. Trigger one with: task ci:build"
+            exit 1
+          fi
+        fi
+        echo "Downloading {{.platform}} artifact from run $RUN ..."
+        rm -rf dist/{{.platform}}
+        mkdir -p dist/{{.platform}}
+        gh run download "$RUN" -n {{.platform}} -D dist/{{.platform}}
+
+        PLUGINS={{.TASKFILE_DIR}}/plugins/unity/Runtime/Plugins
+        case "{{.platform}}" in
+          macos-arm64)
+            mkdir -p "$PLUGINS/macOS"
+            cp dist/macos-arm64/lib/libroulin_core.dylib "$PLUGINS/macOS/"
+            cp dist/macos-arm64/lib/libroulin_fetch.dylib "$PLUGINS/macOS/"
+            ;;
+          ios-arm64)
+            mkdir -p "$PLUGINS/iOS"
+            cp dist/ios-arm64/lib/libroulin-core.a "$PLUGINS/iOS/"
+            cp dist/ios-arm64/lib/libroulin-fetch.a "$PLUGINS/iOS/"
+            cp dist/ios-arm64/lib/libroulin-fetch-apple.a "$PLUGINS/iOS/"
+            cp dist/ios-arm64/lib/libroulin-fetch-share.a "$PLUGINS/iOS/"
+            ;;
+          windows-x86_64)
+            mkdir -p "$PLUGINS/Windows/x86_64"
+            cp dist/windows-x86_64/lib/roulin_core.dll "$PLUGINS/Windows/x86_64/"
+            cp dist/windows-x86_64/lib/roulin_fetch.dll "$PLUGINS/Windows/x86_64/"
+            ;;
+          android-arm64)
+            mkdir -p "$PLUGINS/Android/libs/arm64-v8a"
+            cp dist/android-arm64/lib/libroulin_core.so "$PLUGINS/Android/libs/arm64-v8a/"
+            cp dist/android-arm64/lib/libroulin_fetch.so "$PLUGINS/Android/libs/arm64-v8a/"
+            cp dist/android-arm64/lib/*.aar "$PLUGINS/Android/libs/" 2>/dev/null || true
+            ;;
+          linux-x86_64)
+            echo "linux artifact downloaded to dist/linux-x86_64/; no Unity Plugins target."
+            ;;
+        esac
+
+  artifacts:all:
+    desc: Download CI artifacts for all five platforms from the latest successful run on the current branch
+    cmds:
+      - for: [linux-x86_64, android-arm64, windows-x86_64, macos-arm64, ios-arm64]
+        task: artifacts
+        vars:
+          platform: '{{.ITEM}}'

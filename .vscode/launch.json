@@ -1,0 +1,45 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "roulin-server serve",
+      "type": "go",
+      "request": "launch",
+      "mode": "debug",
+      "program": "${workspaceFolder}/tools/roulin/cmd/roulin-server",
+      "args": ["serve", "--tree", "./testdata/tree", "--port", "8765"],
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "name": "roulin-server build",
+      "type": "go",
+      "request": "launch",
+      "mode": "debug",
+      "program": "${workspaceFolder}/tools/roulin/cmd/roulin-server",
+      "args": ["build", "--input", "./testdata/assets", "--out", "./testdata/tree", "--revision", "dev"],
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "name": "roulin-cli deploy (MinIO)",
+      "type": "go",
+      "request": "launch",
+      "mode": "debug",
+      "program": "${workspaceFolder}/tools/roulin/cmd/roulin-cli",
+      "args": ["deploy", "--tree", "./testdata/tree", "--remote", "s3://roulin-test/dev/", "--endpoint", "http://localhost:9000", "--path-style"],
+      "env": {
+        "AWS_ACCESS_KEY_ID": "minioadmin",
+        "AWS_SECRET_ACCESS_KEY": "minioadmin",
+        "AWS_REGION": "us-east-1"
+      },
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "name": "Go: Current Test",
+      "type": "go",
+      "request": "launch",
+      "mode": "test",
+      "program": "${fileDirname}",
+      "cwd": "${workspaceFolder}"
+    }
+  ]
+}

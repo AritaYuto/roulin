@@ -1,0 +1,10 @@
+{
+  "go.testFlags": ["-v", "-count=1"],
+  "go.lintTool": "golangci-lint",
+  "go.formatTool": "goimports",
+  "go.toolsManagement.autoUpdate": true,
+
+  "C_Cpp.intelliSenseEngine": "disabled",
+  "C_Cpp.autocomplete": "disabled",
+  "C_Cpp.errorSquiggles": "disabled"
+}

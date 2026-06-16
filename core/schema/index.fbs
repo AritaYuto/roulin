@@ -1,0 +1,35 @@
+namespace roulin_fbs;
+
+// Per-asset address record. Multiple Address records can share an IndexEntry
+// when they live in the same blob.
+table Address {
+  address64:ulong;     // FNV-1a 64-bit hash of address_str
+  address_str:string;
+  asset_id:string;     // engine-native asset id (Unity GUID, UE FGuid, ...). optional
+  labels:[string];
+  flags:ubyte;         // bit0=encrypted, bit1=compressed
+  key_id:ushort;       // 0 = not encrypted
+  type_idxs:[uint];    // indices into Index.types[]; typically 1 entry.
+                       //   Empty = type unspecified (engine falls back to its default).
+}
+
+// 1 entry = 1 blob. Every blob the parcel tracks has exactly one IndexEntry,
+// including blobs with no addressable assets (= addresses[] empty, used purely
+// as dep targets). Sorted by blob_hash for deterministic order; address-to-blob
+// lookup is built as an in-memory map at Index load time.
+table IndexEntry {
+  blob_hash:[ubyte];   // 32-byte BLAKE3 (sort key, matches /blobs/{hash[:2]}/{hash})
+  size_bytes:ulong;    // blob binary size
+  deps:[string];       // hex BLAKE3 of bundle's transitive dep closure (self excluded).
+  addresses:[Address]; // 0..N addresses living in this blob
+}
+
+table Index {
+  entries:[IndexEntry]; // sorted by blob_hash
+  types:[string];       // interned engine-specific type identifiers
+                        //   (Unity: AssemblyQualifiedName). Same pattern
+                        //   as blob_meta.UnityBlob.types[].
+                        //   Address.type_idxs[] points here.
+}
+
+root_type Index;
