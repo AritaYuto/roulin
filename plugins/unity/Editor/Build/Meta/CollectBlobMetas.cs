@@ -13,7 +13,7 @@ namespace Roulin.Editor.Build.Meta
         // fork each GUID into asset or scene capture, (3) sort + log per blob.
         // blob_hash is left empty (publish task fills it after BLAKE3).
         // objectToTypes null/empty → type_idxs empty; warm restore falls back
-        // to per-object CBI lookup.
+        // to per-object ContentBuildInterface lookup.
         public Dictionary<string, RoulinUnityBlob> ByBundle(
             IDependencyData dependencyData,
             IBuildExtendedAssetData extendedAssetData,
@@ -93,7 +93,7 @@ namespace Roulin.Editor.Build.Meta
                             extendedAssetData.ExtendedData.TryGetValue(guid, out ext);
                         }
 
-                        // SBP's GenerateBundleCommands has already populated address with
+                        // Scriptable Build Pipeline's GenerateBundleCommands has already populated address with
                         // AssetBundleBuild.addressableNames[i] (or asset path fallback).
                         var assetAddress = assetInfo.address;
                         var assetPath = AssetDatabase.GUIDToAssetPath(guid.ToString());
@@ -102,9 +102,6 @@ namespace Roulin.Editor.Build.Meta
                         {
                             AssetGuid = guid,
                             AssetAddress = assetAddress,
-                            AssetDependencyHash = string.IsNullOrEmpty(assetPath)
-                                ? default
-                                : AssetDatabase.GetAssetDependencyHash(assetPath),
                             IncludedObjects = assetInfo.includedObjects,
                             ReferencedObjects = assetInfo.referencedObjects,
                             Representations = ext?.Representations,
@@ -161,9 +158,6 @@ namespace Roulin.Editor.Build.Meta
             {
                 guid = input.AssetGuid.ToString(),
                 asset_address = input.AssetAddress ?? string.Empty,
-                asset_dependency_hash = input.AssetDependencyHash.isValid
-                    ? input.AssetDependencyHash.ToString()
-                    : string.Empty,
                 build_usage_tag_set = input.BuildUsageTagSetBytes == null
                                       || input.BuildUsageTagSetBytes.Length == 0
                     ? string.Empty
@@ -192,9 +186,6 @@ namespace Roulin.Editor.Build.Meta
                     dto.representations.Add(ToDto(o, objectToTypes, typeIndex, typeList));
                 }
             }
-
-            dto.referenced_asset_hashes = CaptureReferencedAssetHashes(
-                input.ReferencedObjects, input.AssetGuid);
 
             return dto;
         }
@@ -227,9 +218,6 @@ namespace Roulin.Editor.Build.Meta
             {
                 dto.referenced_objects.Add(ToDto(oi, objectToTypes, typeIndex, typeList));
             }
-
-            dto.referenced_asset_hashes = CaptureReferencedAssetHashes(
-                info.referencedObjects, sceneGuid);
 
             foreach (var t in info.includedTypes)
             {
@@ -279,7 +267,7 @@ namespace Roulin.Editor.Build.Meta
         }
 
         // Returns indices for all Types tied to an ObjectIdentifier — multi-Type
-        // matters because SBP hashes the union into its WSF cache key.
+        // matters because Scriptable Build Pipeline hashes the union into its WSF cache key.
         private List<int> ResolveTypeIdxs(
             ObjectIdentifier id,
             IDictionary<ObjectIdentifier, Type[]> objectToTypes,
@@ -320,61 +308,6 @@ namespace Roulin.Editor.Build.Meta
             return result;
         }
 
-        // Sorted by guid for byte-stable serialization.
-        private static List<RoulinUnityAssetHashEntry> CaptureReferencedAssetHashes(
-            IEnumerable<ObjectIdentifier> referencedObjects,
-            GUID selfGuid)
-        {
-            var collected = new SortedDictionary<string, string>(StringComparer.Ordinal);
-            if (referencedObjects != null)
-            {
-                foreach (var o in referencedObjects)
-                {
-                    if (o.guid == selfGuid)
-                    {
-                        continue;
-                    }
-
-                    var key = o.guid.ToString();
-                    if (collected.ContainsKey(key))
-                    {
-                        continue;
-                    }
-
-                    var path = AssetDatabase.GUIDToAssetPath(key);
-                    if (string.IsNullOrEmpty(path))
-                    {
-                        continue;
-                    }
-
-                    if (!path.StartsWith("Assets/", StringComparison.Ordinal)
-                        && !path.StartsWith("Packages/", StringComparison.Ordinal))
-                    {
-                        continue;
-                    }
-
-                    var hash = AssetDatabase.GetAssetDependencyHash(path);
-                    if (!hash.isValid)
-                    {
-                        continue;
-                    }
-
-                    collected[key] = hash.ToString();
-                }
-            }
-
-            var list = new List<RoulinUnityAssetHashEntry>(collected.Count);
-            foreach (var kv in collected)
-            {
-                list.Add(new RoulinUnityAssetHashEntry
-                {
-                    guid = kv.Key,
-                    asset_dependency_hash = kv.Value,
-                });
-            }
-            return list;
-        }
-
         // Direct-Type variant of ResolveTypeIdxs; used when caller already has
         // SceneDependencyInfo.includedTypes (Type[]) instead of an ObjectIdentifier.
         private int ResolveTypeIdxForType(
@@ -410,7 +343,6 @@ namespace Roulin.Editor.Build.Meta
     {
         public GUID AssetGuid;
         public string AssetAddress;
-        public Hash128 AssetDependencyHash;
         public IReadOnlyList<ObjectIdentifier> IncludedObjects;
         public IReadOnlyList<ObjectIdentifier> ReferencedObjects;
         public IReadOnlyList<ObjectIdentifier> Representations;

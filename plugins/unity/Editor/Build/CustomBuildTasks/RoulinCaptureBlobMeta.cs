@@ -12,7 +12,7 @@ namespace Roulin.Editor.Build.CustomBuildTasks
     // Writes per-bundle RoulinUnityBlob into roulinContext.BlobMetasByBundle
     // for the publish task. Reads type-cache output from the asset/scene dependency
     // tasks (injected via task properties rather than IContextObject).
-    internal sealed class RoulinCaptureBlobMeta : RoulinBuildTaskBase
+    public sealed class RoulinCaptureBlobMeta : RoulinBuildTaskBase
     {
         public override int Version => 1;
 

@@ -49,7 +49,6 @@ namespace Roulin.Editor.Tests
                         {
                             guid = "11111111111111111111111111111111",
                             asset_address = "Assets/Hero.prefab",
-                            asset_dependency_hash = "deadbeefdeadbeefdeadbeefdeadbeef",
                             build_usage_tag_set = Convert.ToBase64String(new byte[] { 1, 2, 3, 4 }),
                             included_objects = new List<RoulinUnityObjectId>
                             {
@@ -105,7 +104,6 @@ namespace Roulin.Editor.Tests
             var da = dto.unity_body.assets[0];
             Assert.AreEqual(da.guid, ba.guid);
             Assert.AreEqual(da.asset_address, ba.asset_address);
-            Assert.AreEqual(da.asset_dependency_hash, ba.asset_dependency_hash);
             Assert.AreEqual(da.build_usage_tag_set, ba.build_usage_tag_set);
             Assert.AreEqual(1, ba.included_objects.Count);
             Assert.AreEqual(1, ba.referenced_objects.Count);
@@ -242,7 +240,6 @@ namespace Roulin.Editor.Tests
             {
                 AssetGuid = new GUID("11111111111111111111111111111111"),
                 AssetAddress = "Assets/Hero.prefab",
-                AssetDependencyHash = Hash128.Compute("test"),
                 IncludedObjects = new[] { includedObj },
                 ReferencedObjects = new[] { referencedObj },
                 Representations = new[] { representObj },
@@ -261,7 +258,6 @@ namespace Roulin.Editor.Tests
             Assert.IsNotNull(outputs.Extended);
             Assert.AreEqual(1, outputs.Extended.Representations.Count);
             Assert.AreEqual(representObj, outputs.Extended.Representations[0]);
-            Assert.AreEqual(input.AssetDependencyHash, outputs.AssetDependencyHash);
         }
 
 
@@ -377,7 +373,6 @@ namespace Roulin.Editor.Tests
                 {
                     AssetGuid = assetGuid,
                     AssetAddress = assetPath,
-                    AssetDependencyHash = Hash128.Compute(assetPath),
                     IncludedObjects = included,
                     ReferencedObjects = referenced,
                     Representations = reps,

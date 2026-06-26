@@ -277,7 +277,6 @@ namespace Roulin.Editor.Tests
                 {
                     guid = g,
                     asset_address = $"Assets/Asset_{g.Substring(0, 4)}.prefab",
-                    asset_dependency_hash = string.Empty,
                     build_usage_tag_set = string.Empty
                 });
             }

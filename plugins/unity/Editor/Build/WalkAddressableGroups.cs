@@ -12,7 +12,7 @@ namespace Roulin.Editor.Build
     // skeleton + ownership lookups. Mirrors BuildScriptPackedMode.GenerateBuildInputDefinitions:
     // each group splits into asset + scene partitions ("_scenes" suffix) since
     // SBP rejects mixed Asset/Scene bundles.
-    internal sealed class WalkAddressableGroups
+    public sealed class WalkAddressableGroups
     {
         public List<AssetBundleBuild> BundleBuilds { get; } = new();
         public Dictionary<string, BundleInput> Inputs { get; } = new(StringComparer.Ordinal);

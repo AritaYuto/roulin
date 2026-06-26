@@ -51,19 +51,10 @@ namespace Roulin.Editor.Build.Meta
     {
         public string guid; // 32-char lower-hex AssetDB GUID
         public string asset_address; // SBP AssetLoadInfo.address (Addressables address, or asset path fallback)
-        public string asset_dependency_hash; // 32-char lower-hex Hash128
         public List<RoulinUnityObjectId> included_objects = new();
         public List<RoulinUnityObjectId> referenced_objects = new();
         public List<RoulinUnityObjectId> representations = new();
         public string build_usage_tag_set; // base64 of BuildUsageTagSet binary
-        public List<RoulinUnityAssetHashEntry> referenced_asset_hashes = new();
-    }
-
-    [Serializable]
-    public sealed class RoulinUnityAssetHashEntry
-    {
-        public string guid; // 32-char lower-hex
-        public string asset_dependency_hash; // 32-char lower-hex Hash128
     }
 
     [Serializable]
@@ -87,9 +78,7 @@ namespace Roulin.Editor.Build.Meta
         public List<int> included_type_idxs = new(); // indices into RoulinUnityBlob.types
         public RoulinUnityBuildUsageTagGlobal global_usage = new();
         public string build_usage_tag_set; // base64 of BuildUsageTagSet binary
-        public string prefab_dependency_hash; // 32-char hex Hash128
-
-        public List<RoulinUnityAssetHashEntry> referenced_asset_hashes = new();
+        public string prefab_dependency_hash; // 32-char hex Hash128; populated into dependencyData.DependencyHash[guid] for SBP
     }
 
     // Name-addressed mirror of UnityEditor.Build.Content.BuildUsageTagGlobal:

@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Text;
 using UnityEditor;
 using UnityEditor.Build.Content;
 using UnityEditor.Build.Pipeline.Interfaces;
@@ -12,7 +11,7 @@ namespace Roulin.Editor.Build.Meta
     {
         // Batch decode RoulinBlobMeta envelopes into a dependency-data payload.
         // Non-Unity bodies and unresolved Type strings are dropped silently;
-        // SBP tolerates missing type info via cache miss (only warm speedup lost).
+        // Scriptable Build Pipeline tolerates missing type info via cache miss (only warm speedup lost).
         public RestorePayload Decode(IEnumerable<RoulinBlobMeta> blobMetas)
         {
             var assetByGuid = new Dictionary<GUID, RestoredAsset>();
@@ -98,172 +97,63 @@ namespace Roulin.Editor.Build.Meta
             };
         }
 
-        // Returns default(Hash128) for missing / deleted assets so vanished
-        // assets are naturally flagged as drifted.
-        public static Hash128 DefaultAssetHashLookup(GUID guid)
-        {
-            var path = AssetDatabase.GUIDToAssetPath(guid.ToString());
-            return string.IsNullOrEmpty(path)
-                ? default
-                : AssetDatabase.GetAssetDependencyHash(path);
-        }
-
-        // null = built-in / Library / Resources (runtime-resolved, skip).
-        // empty = guid no longer resolves in the project (deleted), so the
-        // drift check flags any restored ObjectId at this guid as stale.
-        public static ObjectIdentifier[] DefaultObjectIdsLookup(GUID guid)
-        {
-            var path = AssetDatabase.GUIDToAssetPath(guid.ToString());
-            if (string.IsNullOrEmpty(path))
-            {
-                return Array.Empty<ObjectIdentifier>();
-            }
-
-            if (!path.StartsWith("Assets/", StringComparison.Ordinal)
-                && !path.StartsWith("Packages/", StringComparison.Ordinal))
-            {
-                return null;
-            }
-
-            return ContentBuildInterface.GetPlayerObjectIdentifiersInAsset(
-                guid, EditorUserBuildSettings.activeBuildTarget);
-        }
-
-        // Returns the GUIDs that survived the staleness screen; the caller
-        // commits them and falls back to CBI for the rest. Either lookup
-        // may be null to disable its corresponding check.
+        // Writes every payload entry directly into the Scriptable Build Pipeline context. The
+        // caller is responsible for pre-filtering payload to only the entries
+        // it wants restored (e.g. remove VCS-changed GUIDs to force ContentBuildInterface walk
+        // for those). Returns the set of GUIDs actually written.
         public HashSet<GUID> ApplyToContext(
             RestorePayload payload,
             IDependencyData dependencyData,
-            IBuildExtendedAssetData extendedAssetData,
-            Func<GUID, Hash128> currentHashLookup = null,
-            Func<GUID, ObjectIdentifier[]> currentObjectIdsLookup = null)
+            IBuildExtendedAssetData extendedAssetData)
         {
+            var applied = new HashSet<GUID>();
             if (payload?.AssetByGuid == null)
             {
-                return new HashSet<GUID>();
+                return applied;
             }
-
             if (dependencyData == null)
             {
                 throw new ArgumentNullException(nameof(dependencyData));
             }
 
-            bool IsPayloadResident(GUID g) => payload.AssetByGuid.ContainsKey(g);
-
-            var candidates = new List<RestoreCandidate>(payload.AssetByGuid.Count);
             foreach (var kv in payload.AssetByGuid)
             {
-                candidates.Add(new RestoreCandidate(
-                    selfGuid: kv.Key,
-                    storedHash: kv.Value.AssetDependencyHash,
-                    referencedObjects: kv.Value.LoadInfo.referencedObjects,
-                    referencedAssetHashes: kv.Value.ReferencedAssetHashes));
-            }
-
-            var screener = BuildScreener(IsPayloadResident, currentHashLookup, currentObjectIdsLookup);
-            var report = screener.Screen(candidates);
-
-            foreach (var guid in report.Passed)
-            {
-                var restored = payload.AssetByGuid[guid];
-                dependencyData.AssetInfo[guid] = restored.LoadInfo;
-                dependencyData.AssetUsage[guid] = restored.Usage;
+                var restored = kv.Value;
+                dependencyData.AssetInfo[kv.Key] = restored.LoadInfo;
+                dependencyData.AssetUsage[kv.Key] = restored.Usage;
                 if (extendedAssetData != null && restored.Extended != null)
                 {
-                    extendedAssetData.ExtendedData[guid] = restored.Extended;
+                    extendedAssetData.ExtendedData[kv.Key] = restored.Extended;
                 }
+                applied.Add(kv.Key);
             }
-
-            if (currentHashLookup != null || currentObjectIdsLookup != null)
-            {
-                LogScreenReport("asset", report, candidates.Count);
-            }
-
-            return report.Passed;
+            return applied;
         }
 
-        // Scene-side counterpart of ApplyToContext.
+        // Scene-side counterpart. Same pre-filter responsibility on the caller.
         public HashSet<GUID> ApplyScenesToContext(
             RestorePayload payload,
-            IDependencyData dependencyData,
-            Func<GUID, Hash128> currentHashLookup = null,
-            Func<GUID, ObjectIdentifier[]> currentObjectIdsLookup = null)
+            IDependencyData dependencyData)
         {
+            var applied = new HashSet<GUID>();
             if (payload?.SceneByGuid == null)
             {
-                return new HashSet<GUID>();
+                return applied;
             }
-
             if (dependencyData == null)
             {
                 throw new ArgumentNullException(nameof(dependencyData));
             }
 
-            bool IsPayloadResident(GUID g) => payload.SceneByGuid.ContainsKey(g);
-
-            var candidates = new List<RestoreCandidate>(payload.SceneByGuid.Count);
             foreach (var kv in payload.SceneByGuid)
             {
-                candidates.Add(new RestoreCandidate(
-                    selfGuid: kv.Key,
-                    storedHash: kv.Value.PrefabDependencyHash,
-                    referencedObjects: kv.Value.Info.referencedObjects,
-                    referencedAssetHashes: kv.Value.ReferencedAssetHashes));
+                var restored = kv.Value;
+                dependencyData.SceneInfo[kv.Key] = restored.Info;
+                dependencyData.SceneUsage[kv.Key] = restored.Usage;
+                dependencyData.DependencyHash[kv.Key] = restored.PrefabDependencyHash;
+                applied.Add(kv.Key);
             }
-
-            var screener = BuildScreener(IsPayloadResident, currentHashLookup, currentObjectIdsLookup);
-            var report = screener.Screen(candidates);
-
-            foreach (var guid in report.Passed)
-            {
-                var restored = payload.SceneByGuid[guid];
-                dependencyData.SceneInfo[guid] = restored.Info;
-                dependencyData.SceneUsage[guid] = restored.Usage;
-                dependencyData.DependencyHash[guid] = restored.PrefabDependencyHash;
-            }
-
-            if (currentHashLookup != null || currentObjectIdsLookup != null)
-            {
-                LogScreenReport("scene", report, candidates.Count);
-            }
-
-            return report.Passed;
-        }
-
-        private static RestoreScreener BuildScreener(
-            Func<GUID, bool> isPayloadResident,
-            Func<GUID, Hash128> currentHashLookup,
-            Func<GUID, ObjectIdentifier[]> currentObjectIdsLookup)
-        {
-            var referenceChecks = new List<IStalenessCheck>
-            {
-                new PayloadDepDriftCheck(isPayloadResident),
-            };
-            if (currentObjectIdsLookup != null)
-            {
-                referenceChecks.Add(new OutOfPayloadObjectIdDriftCheck(
-                    currentObjectIdsLookup, isPayloadResident, currentHashLookup));
-            }
-
-            IStalenessCheck selfCheck = currentHashLookup == null
-                ? null
-                : new OwnHashDriftCheck(currentHashLookup);
-
-            return new RestoreScreener(selfCheck, referenceChecks);
-        }
-
-        private static void LogScreenReport(string kind, ScreenReport report, int total)
-        {
-            var sb = new StringBuilder();
-            sb.Append("[RestoreBlobMetas] ").Append(kind).Append(" screen: total=").Append(total);
-            foreach (var entry in report.RejectionByReason)
-            {
-                sb.Append(' ').Append(entry.Key).Append('=').Append(entry.Value);
-            }
-            sb.Append(" applied=").Append(report.Passed.Count);
-            sb.Append(" objectIdsCacheSize=").Append(report.ObjectIdsCacheSize);
-            Debug.Log(sb.ToString());
+            return applied;
         }
 
         // One asset DTO → dependency data. Caller resolves RoulinUnityBlob.types
@@ -310,49 +200,12 @@ namespace Roulin.Editor.Build.Meta
                 ? null
                 : new ExtendedAssetData { Representations = reps };
 
-            var depHash = string.IsNullOrEmpty(dto.asset_dependency_hash)
-                ? default
-                : Hash128.Parse(dto.asset_dependency_hash);
-
             return new RestoredAsset
             {
                 LoadInfo = info,
                 Usage = usage,
                 Extended = ext,
-                AssetDependencyHash = depHash,
-                ReferencedAssetHashes = DecodeReferencedAssetHashes(dto.referenced_asset_hashes),
             };
-        }
-
-        // null when the blob_meta predates the field (legacy capture); empty
-        // Dictionary when the field is present but no project-resident refs
-        // were captured.
-        private static Dictionary<GUID, Hash128> DecodeReferencedAssetHashes(
-            List<RoulinUnityAssetHashEntry> entries)
-        {
-            if (entries == null || entries.Count == 0)
-            {
-                return null;
-            }
-
-            var map = new Dictionary<GUID, Hash128>(entries.Count);
-            foreach (var entry in entries)
-            {
-                if (string.IsNullOrEmpty(entry.guid)
-                    || string.IsNullOrEmpty(entry.asset_dependency_hash))
-                {
-                    continue;
-                }
-
-                var hash = Hash128.Parse(entry.asset_dependency_hash);
-                if (!hash.isValid)
-                {
-                    continue;
-                }
-
-                map[new GUID(entry.guid)] = hash;
-            }
-            return map;
         }
 
         // Scene-side counterpart of FromDto. resolvedTypes is the caller's
@@ -418,7 +271,6 @@ namespace Roulin.Editor.Build.Meta
                 Info = sceneInfo,
                 Usage = usage,
                 PrefabDependencyHash = prefabDepHash,
-                ReferencedAssetHashes = DecodeReferencedAssetHashes(dto.referenced_asset_hashes),
             };
         }
 
@@ -477,7 +329,7 @@ namespace Roulin.Editor.Build.Meta
         }
     }
 
-    // Decoded RoulinBlobMeta batch ready to inject into SBP.
+    // Decoded RoulinBlobMeta batch ready to inject into Scriptable Build Pipeline.
     public sealed class RestorePayload
     {
         public Dictionary<GUID, RestoredAsset> AssetByGuid;
@@ -490,8 +342,6 @@ namespace Roulin.Editor.Build.Meta
         public AssetLoadInfo LoadInfo;
         public BuildUsageTagSet Usage;
         public ExtendedAssetData Extended;
-        public Hash128 AssetDependencyHash;
-        public Dictionary<GUID, Hash128> ReferencedAssetHashes;
     }
 
     public struct RestoredScene
@@ -500,6 +350,5 @@ namespace Roulin.Editor.Build.Meta
         public SceneDependencyInfo Info;
         public BuildUsageTagSet Usage;
         public Hash128 PrefabDependencyHash;
-        public Dictionary<GUID, Hash128> ReferencedAssetHashes;
     }
 }

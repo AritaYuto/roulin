@@ -10,14 +10,21 @@ using Debug = UnityEngine.Debug;
 
 namespace Roulin.Editor.Build.CustomBuildTasks
 {
-    // Drop-in for SBP CalculateAssetDependencyData. Two modes:
-    //   passthrough: runs CBI without the dirty-check walk.
+    // Drop-in for Scriptable Build Pipeline CalculateAssetDependencyData. Two modes:
+    //   passthrough: runs ContentBuildInterface without the dirty-check walk.
     //   restore:     when RestorePayload is set, applies stored dependency data up-front
     //                and skips ContentBuildInterface for restored assets.
-    internal sealed class RoulinCalculateAssetDependencyData : IBuildTask
+    //                ChangedGuids (from VCS-diff) is removed from the payload
+    //                before apply, so those assets fall through to ContentBuildInterface.
+    public sealed class RoulinCalculateAssetDependencyData : IBuildTask
     {
         // Pre-decoded dependency data from previous-build blob_metas. Optional.
         public RestorePayload RestorePayload { get; set; }
+
+        // GUIDs that the caller (RoulinBuildScript via VCS-diff) marks as
+        // changed since the previous build; these are excluded from restore.
+        // null/empty = restore every payload entry that is in _content.Assets.
+        public ISet<GUID> ChangedGuids { get; set; }
 
         // Per-ObjectIdentifier → Type[] (multi-Type) collected during Run.
         // Mirrors BuildCacheUtility.m_ObjectToType shape for blob_meta stamping.
@@ -28,7 +35,7 @@ namespace Roulin.Editor.Build.CustomBuildTasks
 
         public ReturnCode Run()
         {
-            // Match SBP lazy-create pattern; InOut injection writes back.
+            // Match Scriptable Build Pipeline lazy-create pattern; InOut injection writes back.
             if (_extendedAssetData == null)
             {
                 _extendedAssetData = new BuildExtendedAssetData();
@@ -49,31 +56,37 @@ namespace Roulin.Editor.Build.CustomBuildTasks
             var typeEntries = new List<KeyValuePair<ObjectIdentifier, Type[]>>();
             var seenObjects = new HashSet<ObjectIdentifier>();
 
-            // Restrict restore to assets in _content.Assets. Entries outside
-            // the build content trip UpdateBundleObjectLayout's KeyNotFoundException.
+            // Pre-filter payload by (a) entries actually in _content.Assets and
+            // (b) GUIDs the caller flagged as changed. (a) avoids
+            // UpdateBundleObjectLayout's KeyNotFoundException for out-of-content
+            // entries; (b) is the VCS-diff staleness signal — flagged GUIDs
+            // fall through to the ContentBuildInterface walk below.
             HashSet<GUID> restoredGuids = null;
             if (RestorePayload != null)
             {
                 var contentSet = new HashSet<GUID>(_content.Assets);
+                var changed = ChangedGuids;
                 var filtered = new RestorePayload
                 {
                     AssetByGuid = new Dictionary<GUID, RestoredAsset>(),
+                    SceneByGuid = RestorePayload.SceneByGuid,
                     ObjectTypes = RestorePayload.ObjectTypes
                 };
                 foreach (var kv in RestorePayload.AssetByGuid)
                 {
-                    if (contentSet.Contains(kv.Key))
+                    if (!contentSet.Contains(kv.Key))
                     {
-                        filtered.AssetByGuid[kv.Key] = kv.Value;
+                        continue;
                     }
+                    if (changed != null && changed.Contains(kv.Key))
+                    {
+                        continue;
+                    }
+                    filtered.AssetByGuid[kv.Key] = kv.Value;
                 }
 
-                // Apply blob_meta restore. Surviving GUIDs skip the CBI walk
-                // below; rejected ones fall through and get fresh data.
                 restoredGuids = new RestoreBlobMetas().ApplyToContext(
-                    filtered, _dependencyData, _extendedAssetData,
-                    currentHashLookup: RestoreBlobMetas.DefaultAssetHashLookup,
-                    currentObjectIdsLookup: RestoreBlobMetas.DefaultObjectIdsLookup);
+                    filtered, _dependencyData, _extendedAssetData);
                 restored = restoredGuids.Count;
 
                 // Pre-seed type cache from restored entries.
@@ -89,7 +102,7 @@ namespace Roulin.Editor.Build.CustomBuildTasks
                 }
 
                 // Fallback for old blob_metas with empty ObjectTypes. One bulk
-                // GetTypeForObjects beats per-object CBI by ~100x downstream.
+                // GetTypeForObjects beats per-object ContentBuildInterface by ~100x downstream.
                 if (restoredGuids.Count > 0
                     && (RestorePayload.ObjectTypes == null || RestorePayload.ObjectTypes.Count == 0))
                 {
@@ -145,14 +158,14 @@ namespace Roulin.Editor.Build.CustomBuildTasks
                         }
 
                         Debug.LogWarning(
-                            "[RoulinCAD] fallback: blob_meta ObjectTypes empty, " +
-                            $"bulk-resolved {arr.Length} restored ObjectId(s) via CBI " +
+                            "[RoulinCalculateAssetDependencyData] fallback: blob_meta ObjectTypes empty, " +
+                            $"bulk-resolved {arr.Length} restored ObjectId(s) via ContentBuildInterface " +
                             "(remove block once blob_meta is regenerated from a cold build)");
                     }
                 }
             }
 
-            // CBI walk for any asset not covered by the restore.
+            // ContentBuildInterface walk for any asset not covered by the restore.
             foreach (var assetGuid in _content.Assets)
             {
                 if (restoredGuids != null && restoredGuids.Contains(assetGuid))
@@ -193,7 +206,7 @@ namespace Roulin.Editor.Build.CustomBuildTasks
                 };
                 _dependencyData.AssetUsage[assetGuid] = usageTagSet;
 
-                // Mirror SBP GatherAssetRepresentations: drop editor-only objects
+                // Mirror Scriptable Build Pipeline GatherAssetRepresentations: drop editor-only objects
                 // and the index-0 main asset; otherwise GenerateSubAssetPathMaps
                 // does IndexOf=-1 → Swap OOR.
                 var reps = ContentBuildInterface.GetPlayerAssetRepresentations(assetGuid, target);
@@ -236,7 +249,7 @@ namespace Roulin.Editor.Build.CustomBuildTasks
             catch (Exception ex)
             {
                 Debug.LogWarning(
-                    "[RoulinCAD] WarmTypeCache failed: " +
+                    "[RoulinCalculateAssetDependencyData] WarmTypeCache failed: " +
                     (ex.InnerException?.Message ?? ex.Message) +
                     " (downstream cache will miss; rebuild times will be high)");
                 typeCount = 0;
@@ -255,7 +268,7 @@ namespace Roulin.Editor.Build.CustomBuildTasks
             CollectedObjectToType = flat;
 
             Debug.Log(
-                $"[RoulinCAD] processed {processed} asset(s) " +
+                $"[RoulinCalculateAssetDependencyData] processed {processed} asset(s) " +
                 $"(restored={restored}, no-objs={withNoObjs}, sub-asset reps={withRepresentations}) " +
                 $"avg included={(processed - restored > 0 ? totalIncluded / (double)(processed - restored) : 0):F1}, " +
                 $"avg referenced={(processed - restored > 0 ? totalReferenced / (double)(processed - restored) : 0):F1}, " +
@@ -265,11 +278,12 @@ namespace Roulin.Editor.Build.CustomBuildTasks
             return ReturnCode.Success;
         }
 
-        // Explicitly release heavy state; SBP / Addressables can retain the
+        // Explicitly release heavy state; Scriptable Build Pipeline / Addressables can retain the
         // task list in a static cache and leak this into the next build.
         public void ReleaseRetainedState()
         {
             RestorePayload = null;
+            ChangedGuids = null;
             CollectedObjectToType = new Dictionary<ObjectIdentifier, Type[]>();
         }
 

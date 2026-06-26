@@ -12,11 +12,15 @@ using Debug = UnityEngine.Debug;
 namespace Roulin.Editor.Build.CustomBuildTasks
 {
     // Scene-side counterpart of RoulinCalculateAssetDependencyData. Skips
-    // SBP's per-scene dirty check + Sprite stale re-walk; restores SceneInfo
+    // Scriptable Build Pipeline's per-scene dirty check + Sprite stale re-walk; restores SceneInfo
     // / SceneUsage / DependencyHash from blob_meta when RestorePayload is set.
-    internal sealed class RoulinCalculateSceneDependencyData : IBuildTask
+    public sealed class RoulinCalculateSceneDependencyData : IBuildTask
     {
         public RestorePayload RestorePayload { get; set; }
+
+        // GUIDs flagged as changed by the caller (RoulinBuildScript via
+        // VCS-diff). Removed from the restore set before apply.
+        public ISet<GUID> ChangedGuids { get; set; }
 
         // Per-ObjectIdentifier → Type[] (multi-Type) collected during Run.
         internal IReadOnlyDictionary<ObjectIdentifier, Type[]> CollectedObjectToType { get; private set; }
@@ -42,14 +46,35 @@ namespace Roulin.Editor.Build.CustomBuildTasks
             var typeEntries = new List<KeyValuePair<ObjectIdentifier, Type[]>>();
             var seenObjects = new HashSet<ObjectIdentifier>();
 
-            // Apply scene restore. Surviving GUIDs skip the CBI walk below.
+            // Pre-filter payload by (a) scenes actually in _content.Scenes and
+            // (b) GUIDs the caller flagged as changed; (b) is the VCS-diff
+            // signal — flagged scenes fall through to the ContentBuildInterface walk.
             HashSet<GUID> restoredGuids = null;
-            if (RestorePayload != null)
+            if (RestorePayload != null && RestorePayload.SceneByGuid != null)
             {
+                var contentSet = new HashSet<GUID>(_content.Scenes);
+                var changed = ChangedGuids;
+                var filtered = new RestorePayload
+                {
+                    AssetByGuid = RestorePayload.AssetByGuid,
+                    SceneByGuid = new Dictionary<GUID, RestoredScene>(),
+                    ObjectTypes = RestorePayload.ObjectTypes,
+                };
+                foreach (var kv in RestorePayload.SceneByGuid)
+                {
+                    if (!contentSet.Contains(kv.Key))
+                    {
+                        continue;
+                    }
+                    if (changed != null && changed.Contains(kv.Key))
+                    {
+                        continue;
+                    }
+                    filtered.SceneByGuid[kv.Key] = kv.Value;
+                }
+
                 restoredGuids = new RestoreBlobMetas().ApplyScenesToContext(
-                    RestorePayload, _dependencyData,
-                    currentHashLookup: RestoreBlobMetas.DefaultAssetHashLookup,
-                    currentObjectIdsLookup: RestoreBlobMetas.DefaultObjectIdsLookup);
+                    filtered, _dependencyData);
                 restored = restoredGuids.Count;
 
                 if (RestorePayload.ObjectTypes != null)
@@ -98,14 +123,14 @@ namespace Roulin.Editor.Build.CustomBuildTasks
                         }
 
                         Debug.LogWarning(
-                            "[RoulinSceneCAD] fallback: blob_meta ObjectTypes empty, " +
-                            $"bulk-resolved {arr.Length} restored ObjectId(s) via CBI " +
+                            "[RoulinCalculateSceneDependencyData] fallback: blob_meta ObjectTypes empty, " +
+                            $"bulk-resolved {arr.Length} restored ObjectId(s) via ContentBuildInterface " +
                             "(remove block once blob_meta is regenerated from a cold build)");
                     }
                 }
             }
 
-            // CBI walk for any scene not covered by the restore.
+            // ContentBuildInterface walk for any scene not covered by the restore.
             foreach (var sceneGuid in _content.Scenes)
             {
                 if (restoredGuids != null && restoredGuids.Contains(sceneGuid))
@@ -117,7 +142,7 @@ namespace Roulin.Editor.Build.CustomBuildTasks
                 var scenePath = AssetDatabase.GUIDToAssetPath(sceneGuid.ToString());
                 if (string.IsNullOrEmpty(scenePath))
                 {
-                    Debug.LogWarning($"[RoulinSceneCAD] scene GUID {sceneGuid} has no asset path; skipping");
+                    Debug.LogWarning($"[RoulinCalculateSceneDependencyData] scene GUID {sceneGuid} has no asset path; skipping");
                     continue;
                 }
 
@@ -144,7 +169,7 @@ namespace Roulin.Editor.Build.CustomBuildTasks
             catch (Exception ex)
             {
                 Debug.LogWarning(
-                    "[RoulinSceneCAD] WarmTypeCache failed: " +
+                    "[RoulinCalculateSceneDependencyData] WarmTypeCache failed: " +
                     (ex.InnerException?.Message ?? ex.Message));
                 typeCount = 0;
             }
@@ -161,7 +186,7 @@ namespace Roulin.Editor.Build.CustomBuildTasks
             CollectedObjectToType = flat;
 
             Debug.Log(
-                $"[RoulinSceneCAD] processed {processed} scene(s) " +
+                $"[RoulinCalculateSceneDependencyData] processed {processed} scene(s) " +
                 $"(restored={restored}) " +
                 $"avg referenced={(processed - restored > 0 ? totalReferenced / (double)(processed - restored) : 0):F1}, " +
                 $"type cache populated for {typeCount} object(s), " +
@@ -174,6 +199,7 @@ namespace Roulin.Editor.Build.CustomBuildTasks
         public void ReleaseRetainedState()
         {
             RestorePayload = null;
+            ChangedGuids = null;
             CollectedObjectToType = new Dictionary<ObjectIdentifier, Type[]>();
         }
 

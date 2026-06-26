@@ -59,8 +59,8 @@ namespace Roulin.Editor.Build
 
         private AddressablesPlayerBuildResult RunBuild(AddressablesDataBuilderInput input)
         {
-            // Outer wall-clock. Subtracting SBP logger's top-level sum yields
-            // the "outside SBP" time (groups walk, warm fetch, uploads, parcel POST).
+            // Outer wall-clock. Subtracting Scriptable Build Pipeline logger's top-level sum yields
+            // the "outside Scriptable Build Pipeline" time (groups walk, warm fetch, uploads, parcel POST).
             var runBuildSw = Stopwatch.StartNew();
             var phaseMs = new List<(string Name, long Ms)>();
 
@@ -113,9 +113,9 @@ namespace Roulin.Editor.Build
             markPhase(phaseSw, "1. groups walk");
 
             // Warm path. Returns null on any failure; falls through to cold path.
-            // walk.BundleBuilds is NOT filtered: SBP downstream tasks need the full
-            // cross-bundle graph. We rely on BuildCache (driven by restored dependency data)
-            // + BlobExists upload skip for unchanged-blob short-circuit.
+            // walk.BundleBuilds is NOT filtered: Scriptable Build Pipeline downstream tasks need the full
+            // cross-bundle graph. We rely on the restored dependency data +
+            // BlobExists upload skip for unchanged-blob short-circuit.
             phaseSw = Stopwatch.StartNew();
             RestorePayload warmRestorePayload = null;
             if (settings.EnableBlobMetaCapture)
@@ -129,7 +129,67 @@ namespace Roulin.Editor.Build
 
             markPhase(phaseSw, "1.5. warm restore fetch");
 
-            // Run SBP.
+            // VCS-diff staleness signal. Skip when there's no payload to filter.
+            // Failure → conservative fallback (all asset/scene GUIDs marked changed
+            // = no restore = cold-equivalent build).
+            phaseSw = Stopwatch.StartNew();
+            HashSet<GUID> changedGuids = null;
+            if (warmRestorePayload != null)
+            {
+                try
+                {
+                    var diff = Task.Run(() => client.GetDiffAsync(sinceSha: null))
+                        .GetAwaiter().GetResult();
+                    var projectRoot = Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
+                    var gitRoot = FindGitRoot(projectRoot);
+                    var unityPaths = VcsDiffPathNormalizer.Normalize(
+                        gitRoot, projectRoot, diff.uncommitted);
+                    var lookup = BundleLookup.From(walk.BundleBuilds);
+                    var changedBundles = lookup.ResolveAffectedBundles(unityPaths);
+                    changedGuids = ExpandBundleSetToAssetGuids(changedBundles, walk.BundleBuilds);
+                    Debug.Log(
+                        $"[RoulinBuild] /diff revision={diff.revision}, " +
+                        $"unity paths in scope={unityPaths.Count}, " +
+                        $"changed bundles={changedBundles.Count}, " +
+                        $"changed asset GUIDs={changedGuids.Count}");
+
+                    // Cap-to-N detail logs let the user verify single-file
+                    // change scenarios (e.g. edit one .png → expect 1 path →
+                    // 1 bundle) without spamming logs on bulk-change builds.
+                    const int detailCap = 20;
+                    if (unityPaths.Count > 0 && unityPaths.Count <= detailCap)
+                    {
+                        foreach (var path in unityPaths)
+                        {
+                            var bundle = lookup.GetBundleFor(path);
+                            Debug.Log(
+                                $"[RoulinBuild]   path: {path} → " +
+                                $"bundle: {bundle ?? "(not in any bundle)"}");
+                        }
+                    }
+                    else if (unityPaths.Count > detailCap)
+                    {
+                        Debug.Log(
+                            $"[RoulinBuild]   (per-path detail omitted: {unityPaths.Count} > {detailCap})");
+                    }
+                    if (changedBundles.Count > 0 && changedBundles.Count <= detailCap)
+                    {
+                        Debug.Log(
+                            $"[RoulinBuild]   changed bundles: " +
+                            $"{string.Join(", ", changedBundles)}");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    changedGuids = AllAssetAndSceneGuids(walk.BundleBuilds);
+                    Debug.LogWarning(
+                        $"[RoulinBuild] /diff query failed → fallback: full rebuild " +
+                        $"({changedGuids.Count} GUIDs marked changed): {ex.Message}");
+                }
+            }
+            markPhase(phaseSw, "1.6. vcs diff");
+
+            // Run Scriptable Build Pipeline.
             phaseSw = Stopwatch.StartNew();
             var target = EditorUserBuildSettings.activeBuildTarget;
             var targetGroup = BuildPipeline.GetBuildTargetGroup(target);
@@ -157,7 +217,7 @@ namespace Roulin.Editor.Build
 
             var content = new BundleBuildContent(walk.BundleBuilds);
 
-            Debug.Log($"[RoulinBuild] running SBP for target={target}, group={targetGroup}…");
+            Debug.Log($"[RoulinBuild] running Scriptable Build Pipeline for target={target}, group={targetGroup}…");
 
             // AssetBundleCompatible omits shader/script extraction → materials
             // using built-in shaders render pink at runtime. ShaderAndScriptExtraction
@@ -165,9 +225,9 @@ namespace Roulin.Editor.Build
             var buildTasks = DefaultBuildTasks.Create(
                 DefaultBuildTasks.Preset.AssetBundleShaderAndScriptExtraction);
 
-            // Drop-in replacement for SBP CalculateAssetDependencyData: skips the
+            // Drop-in replacement for Scriptable Build Pipeline CalculateAssetDependencyData: skips the
             // dirty-check walk (~62% faster). With warmRestorePayload set, it also
-            // pre-populates context for unchanged assets and skips their CBI walk.
+            // pre-populates context for unchanged assets and skips their ContentBuildInterface walk.
             var assetDepReplacedAt = -1;
             RoulinCalculateAssetDependencyData assetDepTask = null;
             for (var i = 0; i < buildTasks.Count; i++)
@@ -176,7 +236,8 @@ namespace Roulin.Editor.Build
                 {
                     assetDepTask = new RoulinCalculateAssetDependencyData
                     {
-                        RestorePayload = warmRestorePayload
+                        RestorePayload = warmRestorePayload,
+                        ChangedGuids = changedGuids,
                     };
                     buildTasks[i] = assetDepTask;
                     assetDepReplacedAt = i;
@@ -188,7 +249,7 @@ namespace Roulin.Editor.Build
             {
                 Debug.LogWarning(
                     "[RoulinBuild] default CalculateAssetDependencyData task " +
-                    "not found in SBP preset — passthrough/restore disabled");
+                    "not found in Scriptable Build Pipeline preset — passthrough/restore disabled");
             }
             else
             {
@@ -205,7 +266,8 @@ namespace Roulin.Editor.Build
                 {
                     sceneDepTask = new RoulinCalculateSceneDependencyData
                     {
-                        RestorePayload = warmRestorePayload
+                        RestorePayload = warmRestorePayload,
+                        ChangedGuids = changedGuids,
                     };
                     buildTasks[i] = sceneDepTask;
                     sceneDepReplacedAt = i;
@@ -216,7 +278,7 @@ namespace Roulin.Editor.Build
             if (sceneDepReplacedAt < 0)
             {
                 Debug.LogWarning(
-                    "[RoulinBuild] default CalculateSceneDependencyData not found in SBP preset — " +
+                    "[RoulinBuild] default CalculateSceneDependencyData not found in Scriptable Build Pipeline preset — " +
                     "scene dependency restore disabled");
             }
             else
@@ -258,7 +320,7 @@ namespace Roulin.Editor.Build
                 Revision = revision
             });
 
-            // Surface per-task SBP timing via logger.ScopedStep — needed to
+            // Surface per-task Scriptable Build Pipeline timing via logger.ScopedStep — needed to
             // decide which task to optimise next.
             var sbpTimingLogger = new RoulinTimingBuildLogger { EmitPerStepLog = settings.Verbose };
 
@@ -270,8 +332,8 @@ namespace Roulin.Editor.Build
                 throw new Exception($"ContentPipeline.BuildAssetBundles failed: {rc}");
             }
 
-            Debug.Log($"[RoulinBuild] SBP done ({sbpResults.BundleInfos.Count} bundle(s))");
-            markPhase(phaseSw, "2. SBP ContentPipeline.BuildAssetBundles");
+            Debug.Log($"[RoulinBuild] Scriptable Build Pipeline done ({sbpResults.BundleInfos.Count} bundle(s))");
+            markPhase(phaseSw, "2. Scriptable Build Pipeline ContentPipeline.BuildAssetBundles");
 
             var locationCount = 0;
             long totalBytes = 0;
@@ -294,7 +356,7 @@ namespace Roulin.Editor.Build
             GC.WaitForPendingFinalizers();
             GC.Collect();
 
-            // Unified timing summary: macro phases + SBP per-step aggregates.
+            // Unified timing summary: macro phases + Scriptable Build Pipeline per-step aggregates.
             runBuildSw.Stop();
             var runBuildMs = runBuildSw.ElapsedMilliseconds;
             sbpTimingLogger.FlushSummary(runBuildMs, phaseMs);
@@ -304,6 +366,65 @@ namespace Roulin.Editor.Build
                 OutputPath = outputDir,
                 LocationCount = locationCount
             };
+        }
+
+        private static string FindGitRoot(string startDir)
+        {
+            var dir = new System.IO.DirectoryInfo(startDir);
+            while (dir != null)
+            {
+                var marker = Path.Combine(dir.FullName, ".git");
+                if (System.IO.Directory.Exists(marker) || System.IO.File.Exists(marker))
+                {
+                    return dir.FullName;
+                }
+                dir = dir.Parent;
+            }
+            return startDir;
+        }
+
+        private static HashSet<GUID> ExpandBundleSetToAssetGuids(
+            ISet<string> bundleNames, List<UnityEditor.AssetBundleBuild> bundleBuilds)
+        {
+            var result = new HashSet<GUID>();
+            foreach (var b in bundleBuilds)
+            {
+                if (!bundleNames.Contains(b.assetBundleName) || b.assetNames == null)
+                {
+                    continue;
+                }
+                foreach (var assetPath in b.assetNames)
+                {
+                    var guidStr = AssetDatabase.AssetPathToGUID(assetPath);
+                    if (!string.IsNullOrEmpty(guidStr))
+                    {
+                        result.Add(new GUID(guidStr));
+                    }
+                }
+            }
+            return result;
+        }
+
+        private static HashSet<GUID> AllAssetAndSceneGuids(
+            List<UnityEditor.AssetBundleBuild> bundleBuilds)
+        {
+            var result = new HashSet<GUID>();
+            foreach (var b in bundleBuilds)
+            {
+                if (b.assetNames == null)
+                {
+                    continue;
+                }
+                foreach (var assetPath in b.assetNames)
+                {
+                    var guidStr = AssetDatabase.AssetPathToGUID(assetPath);
+                    if (!string.IsNullOrEmpty(guidStr))
+                    {
+                        result.Add(new GUID(guidStr));
+                    }
+                }
+            }
+            return result;
         }
     }
 }

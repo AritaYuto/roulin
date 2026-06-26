@@ -132,6 +132,24 @@ namespace Roulin.Editor.Build
             return parsed?.hashes ?? new List<string>();
         }
 
+        // Fetches the VCS diff used by the incremental build path. `sinceSha`
+        // is the revision recorded in the last published catalog; pass null or
+        // empty to skip the committed diff (caller falls back to full rebuild).
+        // Returns null on transport-level failure so callers can degrade
+        // gracefully rather than aborting the build.
+        public async Task<DiffResponse> GetDiffAsync(string sinceSha, CancellationToken ct = default)
+        {
+            var query = string.IsNullOrEmpty(sinceSha) ? "" : "?since=" + Uri.EscapeDataString(sinceSha);
+            var url = $"{_baseUrl}/diff{query}";
+            var (status, body) = await SendWithRetry(
+                () => new HttpRequestMessage(HttpMethod.Get, url), ct);
+            if ((int)status >= 400)
+            {
+                throw new Exception($"GET /diff failed: {(int)status} {status}: {body}");
+            }
+            return JsonUtility.FromJson<DiffResponse>(body);
+        }
+
         // Fetches the per-blob sidecar. Returns null on 404.
         public async Task<RoulinBlobMeta> GetBlobMeta(string blobHash, CancellationToken ct = default)
         {
@@ -233,6 +251,14 @@ namespace Roulin.Editor.Build
         {
             public string address;
             public string new_blob_hex;
+        }
+
+        [Serializable]
+        public sealed class DiffResponse
+        {
+            public string revision;
+            public List<string> changed;
+            public List<string> uncommitted;
         }
     }
 }
