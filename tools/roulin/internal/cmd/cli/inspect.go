@@ -186,14 +186,13 @@ func printBlobMetaSection(w io.Writer, m *build.BlobMeta) {
 		len(ub.Types), len(ub.Assets), len(ub.Scenes))
 	for i, a := range ub.Assets {
 		fmt.Fprintf(w, "      [asset %d] %s\n", i, a.AssetAddress)
-		fmt.Fprintf(w, "        included=%d referenced=%d representations=%d referenced_asset_hashes=%d\n",
-			len(a.IncludedObjects), len(a.ReferencedObjects), len(a.Representations), len(a.ReferencedAssetHashes))
-		fmt.Fprintf(w, "        asset_dependency_hash=%s\n", a.AssetDependencyHash)
+		fmt.Fprintf(w, "        included=%d referenced=%d representations=%d\n",
+			len(a.IncludedObjects), len(a.ReferencedObjects), len(a.Representations))
 	}
 	for i, s := range ub.Scenes {
 		fmt.Fprintf(w, "      [scene %d] %s\n", i, s.ScenePath)
-		fmt.Fprintf(w, "        referenced=%d included_type_idxs=%d referenced_asset_hashes=%d global_usage(uint=%d bool=%d)\n",
-			len(s.ReferencedObjects), len(s.IncludedTypeIdxs), len(s.ReferencedAssetHashes),
+		fmt.Fprintf(w, "        referenced=%d included_type_idxs=%d global_usage(uint=%d bool=%d)\n",
+			len(s.ReferencedObjects), len(s.IncludedTypeIdxs),
 			len(s.GlobalUsage.UintFields), len(s.GlobalUsage.BoolFields))
 	}
 }

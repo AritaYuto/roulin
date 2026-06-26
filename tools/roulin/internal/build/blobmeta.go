@@ -136,7 +136,6 @@ func writeUnityScene(b *flatbuffers.Builder, s UnityScene) flatbuffers.UOffsetT 
 	usageOff := b.CreateByteVector(usageBytes)
 
 	refsOff := writeUnityObjectIdVector(b, s.ReferencedObjects, fbs.UnitySceneStartReferencedObjectsVector)
-	refHashesOff := writeUnityAssetHashEntryVector(b, s.ReferencedAssetHashes, fbs.UnitySceneStartReferencedAssetHashesVector)
 
 	var typesOff flatbuffers.UOffsetT
 	if len(s.IncludedTypeIdxs) > 0 {
@@ -161,9 +160,6 @@ func writeUnityScene(b *flatbuffers.Builder, s UnityScene) flatbuffers.UOffsetT 
 	fbs.UnitySceneAddGlobalUsage(b, globalUsageOff)
 	fbs.UnitySceneAddBuildUsageTagSet(b, usageOff)
 	fbs.UnitySceneAddPrefabDependencyHash(b, depHashOff)
-	if refHashesOff != 0 {
-		fbs.UnitySceneAddReferencedAssetHashes(b, refHashesOff)
-	}
 	return fbs.UnitySceneEnd(b)
 }
 
@@ -215,19 +211,16 @@ func writeUnityBuildUsageTagGlobal(b *flatbuffers.Builder, g UnityBuildUsageTagG
 func writeUnityAsset(b *flatbuffers.Builder, a UnityAsset) flatbuffers.UOffsetT {
 	guidOff := b.CreateByteVector(decodeHexLenient(a.Guid))
 	addressOff := b.CreateString(a.AssetAddress)
-	depHashOff := b.CreateByteVector(decodeHexLenient(a.AssetDependencyHash))
 	usageBytes, _ := base64.StdEncoding.DecodeString(a.BuildUsageTagSet)
 	usageOff := b.CreateByteVector(usageBytes)
 
 	includedOff := writeUnityObjectIdVector(b, a.IncludedObjects, fbs.UnityAssetStartIncludedObjectsVector)
 	referencedOff := writeUnityObjectIdVector(b, a.ReferencedObjects, fbs.UnityAssetStartReferencedObjectsVector)
 	repsOff := writeUnityObjectIdVector(b, a.Representations, fbs.UnityAssetStartRepresentationsVector)
-	refHashesOff := writeUnityAssetHashEntryVector(b, a.ReferencedAssetHashes, fbs.UnityAssetStartReferencedAssetHashesVector)
 
 	fbs.UnityAssetStart(b)
 	fbs.UnityAssetAddGuid(b, guidOff)
 	fbs.UnityAssetAddAssetAddress(b, addressOff)
-	fbs.UnityAssetAddAssetDependencyHash(b, depHashOff)
 	if includedOff != 0 {
 		fbs.UnityAssetAddIncludedObjects(b, includedOff)
 	}
@@ -238,36 +231,7 @@ func writeUnityAsset(b *flatbuffers.Builder, a UnityAsset) flatbuffers.UOffsetT 
 		fbs.UnityAssetAddRepresentations(b, repsOff)
 	}
 	fbs.UnityAssetAddBuildUsageTagSet(b, usageOff)
-	if refHashesOff != 0 {
-		fbs.UnityAssetAddReferencedAssetHashes(b, refHashesOff)
-	}
 	return fbs.UnityAssetEnd(b)
-}
-
-// writeUnityAssetHashEntryVector writes a [UnityAssetHashEntry] vector.
-// startFn is the schema-specific StartXxxVector helper (= different per field).
-func writeUnityAssetHashEntryVector(
-	b *flatbuffers.Builder,
-	entries []UnityAssetHashEntry,
-	startFn func(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT,
-) flatbuffers.UOffsetT {
-	if len(entries) == 0 {
-		return 0
-	}
-	entryOffsets := make([]flatbuffers.UOffsetT, len(entries))
-	for i := len(entries) - 1; i >= 0; i-- {
-		guidOff := b.CreateByteVector(decodeHexLenient(entries[i].Guid))
-		hashOff := b.CreateByteVector(decodeHexLenient(entries[i].AssetDependencyHash))
-		fbs.UnityAssetHashEntryStart(b)
-		fbs.UnityAssetHashEntryAddGuid(b, guidOff)
-		fbs.UnityAssetHashEntryAddAssetDependencyHash(b, hashOff)
-		entryOffsets[i] = fbs.UnityAssetHashEntryEnd(b)
-	}
-	startFn(b, len(entryOffsets))
-	for i := len(entryOffsets) - 1; i >= 0; i-- {
-		b.PrependUOffsetT(entryOffsets[i])
-	}
-	return b.EndVector(len(entryOffsets))
 }
 
 // writeUnityObjectIdVector writes a [UnityObjectId] vector. startFn is the
@@ -373,14 +337,12 @@ func readUnityBlob(u *fbs.UnityBlob) *UnityBlob {
 			continue
 		}
 		assets[i] = UnityAsset{
-			Guid:                  hex.EncodeToString(ua.GuidBytes()),
-			AssetAddress:          string(ua.AssetAddress()),
-			AssetDependencyHash:   hex.EncodeToString(ua.AssetDependencyHashBytes()),
-			IncludedObjects:       readUnityObjectIds(ua.IncludedObjectsLength(), ua.IncludedObjects),
-			ReferencedObjects:     readUnityObjectIds(ua.ReferencedObjectsLength(), ua.ReferencedObjects),
-			Representations:       readUnityObjectIds(ua.RepresentationsLength(), ua.Representations),
-			BuildUsageTagSet:      base64.StdEncoding.EncodeToString(ua.BuildUsageTagSetBytes()),
-			ReferencedAssetHashes: readUnityAssetHashEntries(ua.ReferencedAssetHashesLength(), ua.ReferencedAssetHashes),
+			Guid:              hex.EncodeToString(ua.GuidBytes()),
+			AssetAddress:      string(ua.AssetAddress()),
+			IncludedObjects:   readUnityObjectIds(ua.IncludedObjectsLength(), ua.IncludedObjects),
+			ReferencedObjects: readUnityObjectIds(ua.ReferencedObjectsLength(), ua.ReferencedObjects),
+			Representations:   readUnityObjectIds(ua.RepresentationsLength(), ua.Representations),
+			BuildUsageTagSet:  base64.StdEncoding.EncodeToString(ua.BuildUsageTagSetBytes()),
 		}
 	}
 	scenes := make([]UnityScene, u.ScenesLength())
@@ -441,36 +403,14 @@ func readUnityScene(s *fbs.UnityScene) UnityScene {
 	}
 
 	return UnityScene{
-		Guid:                  hex.EncodeToString(s.GuidBytes()),
-		ScenePath:             string(s.ScenePath()),
-		ReferencedObjects:     readUnityObjectIds(s.ReferencedObjectsLength(), s.ReferencedObjects),
-		IncludedTypeIdxs:      typeIdxs,
-		GlobalUsage:           globalUsage,
-		BuildUsageTagSet:      base64.StdEncoding.EncodeToString(s.BuildUsageTagSetBytes()),
-		PrefabDependencyHash:  hex.EncodeToString(s.PrefabDependencyHashBytes()),
-		ReferencedAssetHashes: readUnityAssetHashEntries(s.ReferencedAssetHashesLength(), s.ReferencedAssetHashes),
+		Guid:                 hex.EncodeToString(s.GuidBytes()),
+		ScenePath:            string(s.ScenePath()),
+		ReferencedObjects:    readUnityObjectIds(s.ReferencedObjectsLength(), s.ReferencedObjects),
+		IncludedTypeIdxs:     typeIdxs,
+		GlobalUsage:          globalUsage,
+		BuildUsageTagSet:     base64.StdEncoding.EncodeToString(s.BuildUsageTagSetBytes()),
+		PrefabDependencyHash: hex.EncodeToString(s.PrefabDependencyHashBytes()),
 	}
-}
-
-func readUnityAssetHashEntries(
-	length int,
-	accessor func(obj *fbs.UnityAssetHashEntry, j int) bool,
-) []UnityAssetHashEntry {
-	if length == 0 {
-		return nil
-	}
-	out := make([]UnityAssetHashEntry, length)
-	var e fbs.UnityAssetHashEntry
-	for i := 0; i < length; i++ {
-		if !accessor(&e, i) {
-			continue
-		}
-		out[i] = UnityAssetHashEntry{
-			Guid:                hex.EncodeToString(e.GuidBytes()),
-			AssetDependencyHash: hex.EncodeToString(e.AssetDependencyHashBytes()),
-		}
-	}
-	return out
 }
 
 func readUnityObjectIds(

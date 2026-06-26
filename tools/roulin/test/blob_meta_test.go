@@ -38,10 +38,9 @@ func sampleBlobMeta(hash string) build.BlobMeta {
 			},
 			Assets: []build.UnityAsset{
 				{
-					Guid:                "11111111111111111111111111111111",
-					AssetAddress:        "Assets/Hero.prefab",
-					AssetDependencyHash: "deadbeefdeadbeefdeadbeefdeadbeef",
-					BuildUsageTagSet:    "AQIDBA==", // base64 of {1,2,3,4}
+					Guid:             "11111111111111111111111111111111",
+					AssetAddress:     "Assets/Hero.prefab",
+					BuildUsageTagSet: "AQIDBA==", // base64 of {1,2,3,4}
 					IncludedObjects: []build.UnityObjectId{
 						{
 							Guid:                  "11111111111111111111111111111111",
@@ -72,7 +71,7 @@ func setupBlobMetaServer(t *testing.T) (*httptest.Server, string) {
 	dir := t.TempDir()
 	st := local.NewFile(dir)
 	w := &server.Writer{Storage: st}
-	srv := server.New(st, w, 0)
+	srv := server.New(st, w, nil, 0)
 	ts := httptest.NewServer(srv.Handler)
 	t.Cleanup(ts.Close)
 	return ts, dir
@@ -109,9 +108,6 @@ func TestBlobMeta_Roundtrip(t *testing.T) {
 	}
 	if asset.AssetAddress != wantAsset.AssetAddress {
 		t.Errorf("Asset.AssetAddress: %s, want %s", asset.AssetAddress, wantAsset.AssetAddress)
-	}
-	if asset.AssetDependencyHash != wantAsset.AssetDependencyHash {
-		t.Errorf("AssetDependencyHash: %s, want %s", asset.AssetDependencyHash, wantAsset.AssetDependencyHash)
 	}
 	if asset.BuildUsageTagSet != wantAsset.BuildUsageTagSet {
 		t.Errorf("BuildUsageTagSet: %s, want %s", asset.BuildUsageTagSet, wantAsset.BuildUsageTagSet)

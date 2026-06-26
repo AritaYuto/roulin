@@ -210,28 +210,8 @@ func (rcv *UnityScene) MutatePrefabDependencyHash(j int, n byte) bool {
 	return false
 }
 
-func (rcv *UnityScene) ReferencedAssetHashes(obj *UnityAssetHashEntry, j int) bool {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
-	if o != 0 {
-		x := rcv._tab.Vector(o)
-		x += flatbuffers.UOffsetT(j) * 4
-		x = rcv._tab.Indirect(x)
-		obj.Init(rcv._tab.Bytes, x)
-		return true
-	}
-	return false
-}
-
-func (rcv *UnityScene) ReferencedAssetHashesLength() int {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
-	if o != 0 {
-		return rcv._tab.VectorLen(o)
-	}
-	return 0
-}
-
 func UnitySceneStart(builder *flatbuffers.Builder) {
-	builder.StartObject(8)
+	builder.StartObject(7)
 }
 func UnitySceneAddGuid(builder *flatbuffers.Builder, guid flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(guid), 0)
@@ -268,12 +248,6 @@ func UnitySceneAddPrefabDependencyHash(builder *flatbuffers.Builder, prefabDepen
 }
 func UnitySceneStartPrefabDependencyHashVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(1, numElems, 1)
-}
-func UnitySceneAddReferencedAssetHashes(builder *flatbuffers.Builder, referencedAssetHashes flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(7, flatbuffers.UOffsetT(referencedAssetHashes), 0)
-}
-func UnitySceneStartReferencedAssetHashesVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
-	return builder.StartVector(4, numElems, 4)
 }
 func UnitySceneEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()

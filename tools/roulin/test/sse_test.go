@@ -26,7 +26,7 @@ func TestSse_BroadcastOnPostPatches(t *testing.T) {
 	srv := server.New(st, &server.Writer{
 		Storage:     st,
 		Broadcaster: bc,
-	}, 0)
+	}, nil, 0)
 	ts := httptest.NewServer(srv.Handler)
 	t.Cleanup(ts.Close)
 
@@ -61,7 +61,7 @@ func TestSse_PostParcelDoesNotBroadcast(t *testing.T) {
 	srv := server.New(st, &server.Writer{
 		Storage:     st,
 		Broadcaster: bc,
-	}, 0)
+	}, nil, 0)
 	ts := httptest.NewServer(srv.Handler)
 	t.Cleanup(ts.Close)
 
@@ -138,7 +138,7 @@ func TestPatches_RejectsBadBody(t *testing.T) {
 	srv := server.New(st, &server.Writer{
 		Storage:     st,
 		Broadcaster: bc,
-	}, 0)
+	}, nil, 0)
 	ts := httptest.NewServer(srv.Handler)
 	t.Cleanup(ts.Close)
 

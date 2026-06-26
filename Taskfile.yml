@@ -14,6 +14,8 @@ vars:
   TOOLS_DIR: tools/roulin
   BUILD_CPP_DIR: tools-dev/build-cpp
   DEFAULT_BASE_URL: http://localhost:8765
+  DEV_SERVER_LOG_DIR: '{{.TASKFILE_DIR}}/logs'
+  DEV_SERVER_BIN: '{{.TASKFILE_DIR}}/dist/roulin-server-dev'
 
 tasks:
   default:
@@ -39,7 +41,7 @@ tasks:
       - go test ./...
 
   go:test:integration:
-    desc: Run Go integration tests (requires `task dev:up:detach` first)
+    desc: Run Go integration tests (requires `task dev:up:detach` running)
     dir: '{{.TOOLS_DIR}}'
     cmds:
       - go test -tags integration ./...
@@ -51,65 +53,92 @@ tasks:
       - go vet ./...
 
   # ===========================================================================
-  # Dev stack: MinIO + roulin-server (compose.yml)
+  # Dev stack: MinIO (Docker) + roulin-server (native, built from source).
+  #
+  # roulin-server runs natively so the local git working tree is accessible
+  # at full filesystem speed (Docker for Mac bind mounts are prohibitively
+  # slow for large repos). The server is rebuilt on every launch so source
+  # changes always reflect immediately. MinIO + bucket bootstrap stay in
+  # Docker (see compose.yml).
+  #
+  # Foreground (Ctrl+C to stop):  task dev:up
+  # Background (for integration tests / parallel work):  task dev:up:detach
+  #                                                       task dev:down
   # ===========================================================================
+
+  dev:minio:up:
+    desc: Start MinIO + bucket bootstrap (Docker, detached, waits for ready)
+    cmds:
+      - docker compose up -d minio
+      - docker compose run --rm minio-setup
+
+  dev:server:build:
+    desc: Build roulin-server binary into dist/roulin-server-dev
+    dir: '{{.TOOLS_DIR}}'
+    cmds:
+      - go build -o {{.DEV_SERVER_BIN}} ./cmd/roulin-server
 
   dev:up:
-    desc: Start MinIO + roulin-server in foreground
+    desc: Start MinIO (Docker) + roulin-server (native, foreground). Ctrl+C to stop.
+    deps: [dev:minio:up, dev:server:build]
     cmds:
-      - docker compose up
+      - >
+        {{.DEV_SERVER_BIN}} serve
+        --storage=s3://roulin-dev
+        --storage-endpoint=http://localhost:9000
+        --storage-path-style
 
   dev:up:detach:
-    desc: Start MinIO + roulin-server in background
+    desc: Start MinIO (Docker) + roulin-server (native, background) for tests / parallel work
+    deps: [dev:minio:up, dev:server:build]
     cmds:
-      - docker compose up -d
-
-  dev:rebuild:
-    desc: Rebuild roulin-server image, then start (foreground)
-    cmds:
-      - docker compose up --build
-
-  dev:rebuild:detach:
-    desc: Rebuild roulin-server image, then start (background)
-    cmds:
-      - docker compose up --build -d
+      - mkdir -p {{.DEV_SERVER_LOG_DIR}}
+      - |
+        bash -c 'nohup {{.DEV_SERVER_BIN}} serve \
+          --storage=s3://roulin-dev \
+          --storage-endpoint=http://localhost:9000 \
+          --storage-path-style \
+          --log-dir={{.DEV_SERVER_LOG_DIR}} \
+          > /dev/null 2>&1 & disown'
+        echo "roulin-server started. Logs: {{.DEV_SERVER_LOG_DIR}}/roulin-server-$(date +%Y-%m-%d).log"
 
   dev:down:
-    desc: Stop and remove the dev stack
+    desc: Stop the native roulin-server (if running detached) + MinIO
     cmds:
+      - lsof -ti tcp:8765 | xargs -r kill 2>/dev/null || true
       - docker compose down
 
-  dev:logs:
-    desc: Tail roulin-server logs
+  dev:restart:
+    desc: dev:down + dev:up (foreground). Use after leaving a detached server lying around.
     cmds:
-      - docker compose logs -f roulin-server
+      - task: dev:down
+      - task: dev:up
+
+  dev:restart:detach:
+    desc: dev:down + dev:up:detach.
+    cmds:
+      - task: dev:down
+      - task: dev:up:detach
+
+  dev:logs:
+    desc: Tail today's roulin-server log file
+    cmds:
+      - tail -f {{.DEV_SERVER_LOG_DIR}}/roulin-server-$(date +%Y-%m-%d).log
 
   # ===========================================================================
-  # Dev with peer storage: local roulin-server fronting an S3-compatible
-  # store on a peer machine (compose.peer.yml). Credentials + endpoint come
-  # from .env or shell. For foreground / rebuild use raw
-  # `docker compose -f compose.peer.yml`.
+  # Dev with peer storage: roulin-server (native) pointed at an externally-
+  # hosted MinIO (e.g. teammate's machine over LAN / VPN). No local Docker
+  # services — the storage backend is somebody else's.
+  #
+  # All required env (ROULIN_STORAGE, ROULIN_STORAGE_ENDPOINT, AWS_* creds)
+  # comes from .env — copy .example.env and edit.
   # ===========================================================================
 
   dev:peer:up:
-    desc: Start local roulin-server pointed at peer-hosted storage (background)
+    desc: Run roulin-server (native, foreground) against peer-hosted MinIO. Config from .env.
+    deps: [dev:server:build]
     cmds:
-      - docker compose -f compose.peer.yml up -d
-
-  dev:peer:rebuild:
-    desc: Rebuild roulin-server image, then start pointed at peer-hosted storage (foreground)
-    cmds:
-      - docker compose -f compose.peer.yml up --build
-
-  dev:peer:down:
-    desc: Stop the peer-storage roulin-server
-    cmds:
-      - docker compose -f compose.peer.yml down
-
-  dev:peer:logs:
-    desc: Tail peer-storage roulin-server logs
-    cmds:
-      - docker compose -f compose.peer.yml logs -f roulin-server
+      - '{{.DEV_SERVER_BIN}} serve'
 
   # ===========================================================================
   # C++ libraries cross-build (roulin-core + roulin-fetch)

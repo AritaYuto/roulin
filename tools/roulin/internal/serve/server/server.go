@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/KirisameMarisa/roulin/tools/roulin/internal/build/vcs"
 	"github.com/KirisameMarisa/roulin/tools/roulin/internal/serve/sse"
 	"github.com/KirisameMarisa/roulin/tools/roulin/internal/storage"
 	"golang.org/x/net/http2"
@@ -20,11 +21,15 @@ type Writer struct {
 }
 
 // New creates an h2c HTTP server. Pass nil writer for read-only mode.
-func New(rdStorage storage.Storage, writer *Writer, port int) *http.Server {
+func New(rdStorage storage.Storage, writer *Writer, vcsAdapter vcs.VCSAdapter, port int) *http.Server {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /index/{revision}", handleIndex(rdStorage))
 	mux.HandleFunc("GET /blobs/{prefix}/{hash}", handleBlob(rdStorage))
 	mux.HandleFunc("GET /health", handleHealth())
+
+	if vcsAdapter != nil {
+		mux.HandleFunc("GET /diff", handleDiff(vcsAdapter))
+	}
 
 	if writer != nil {
 		mux.HandleFunc("POST /blobs", handlePostBlob(writer.Storage))
@@ -46,9 +51,9 @@ func New(rdStorage storage.Storage, writer *Writer, port int) *http.Server {
 	}
 
 	return &http.Server{
-		Addr:    fmt.Sprintf(":%d", port),
-		Handler: h2c.NewHandler(logMiddleware(mux), &http2.Server{}),
-		ReadHeaderTimeout: 10 * time.Second,  // Slowloris defense; covers headers only, not large bodies
+		Addr:              fmt.Sprintf(":%d", port),
+		Handler:           h2c.NewHandler(logMiddleware(mux), &http2.Server{}),
+		ReadHeaderTimeout: 10 * time.Second, // Slowloris defense; covers headers only, not large bodies
 		// WriteTimeout intentionally unset: it would terminate SSE hot-reload streams.
 		IdleTimeout: 120 * time.Second,
 	}

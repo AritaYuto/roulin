@@ -21,17 +21,10 @@ table UnityBlob {
 table UnityAsset {
   guid:[ubyte];                     // 16B
   asset_address:string;             // Addressables address, or asset path fallback
-  asset_dependency_hash:[ubyte];    // 16B Hash128
   included_objects:[UnityObjectId];
   referenced_objects:[UnityObjectId];
   representations:[UnityObjectId];
   build_usage_tag_set:[ubyte];      // BuildUsageTagSet.SerializeToBinary
-  referenced_asset_hashes:[UnityAssetHashEntry];
-}
-
-table UnityAssetHashEntry {
-  guid:[ubyte];                     // 16B
-  asset_dependency_hash:[ubyte];    // 16B
 }
 
 // No included_objects: SceneDependencyInfo (SBP) doesn't expose it.
@@ -42,8 +35,7 @@ table UnityScene {
   included_type_idxs:[uint];
   global_usage:UnityBuildUsageTagGlobal;
   build_usage_tag_set:[ubyte];
-  prefab_dependency_hash:[ubyte];   // 16B
-  referenced_asset_hashes:[UnityAssetHashEntry];
+  prefab_dependency_hash:[ubyte];   // 16B; populated into dependencyData.DependencyHash[guid] for SBP
 }
 
 // Name-addressed (vs slot-pinned) to stay forward-compatible with new

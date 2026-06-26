@@ -24,9 +24,6 @@ struct UnityBlobBuilder;
 struct UnityAsset;
 struct UnityAssetBuilder;
 
-struct UnityAssetHashEntry;
-struct UnityAssetHashEntryBuilder;
-
 struct UnityScene;
 struct UnitySceneBuilder;
 
@@ -330,21 +327,16 @@ struct UnityAsset FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
     VT_GUID = 4,
     VT_ASSET_ADDRESS = 6,
-    VT_ASSET_DEPENDENCY_HASH = 8,
-    VT_INCLUDED_OBJECTS = 10,
-    VT_REFERENCED_OBJECTS = 12,
-    VT_REPRESENTATIONS = 14,
-    VT_BUILD_USAGE_TAG_SET = 16,
-    VT_REFERENCED_ASSET_HASHES = 18
+    VT_INCLUDED_OBJECTS = 8,
+    VT_REFERENCED_OBJECTS = 10,
+    VT_REPRESENTATIONS = 12,
+    VT_BUILD_USAGE_TAG_SET = 14
   };
   const ::flatbuffers::Vector<uint8_t> *guid() const {
     return GetPointer<const ::flatbuffers::Vector<uint8_t> *>(VT_GUID);
   }
   const ::flatbuffers::String *asset_address() const {
     return GetPointer<const ::flatbuffers::String *>(VT_ASSET_ADDRESS);
-  }
-  const ::flatbuffers::Vector<uint8_t> *asset_dependency_hash() const {
-    return GetPointer<const ::flatbuffers::Vector<uint8_t> *>(VT_ASSET_DEPENDENCY_HASH);
   }
   const ::flatbuffers::Vector<::flatbuffers::Offset<roulin_fbs::UnityObjectId>> *included_objects() const {
     return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<roulin_fbs::UnityObjectId>> *>(VT_INCLUDED_OBJECTS);
@@ -358,17 +350,12 @@ struct UnityAsset FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   const ::flatbuffers::Vector<uint8_t> *build_usage_tag_set() const {
     return GetPointer<const ::flatbuffers::Vector<uint8_t> *>(VT_BUILD_USAGE_TAG_SET);
   }
-  const ::flatbuffers::Vector<::flatbuffers::Offset<roulin_fbs::UnityAssetHashEntry>> *referenced_asset_hashes() const {
-    return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<roulin_fbs::UnityAssetHashEntry>> *>(VT_REFERENCED_ASSET_HASHES);
-  }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
            VerifyOffset(verifier, VT_GUID) &&
            verifier.VerifyVector(guid()) &&
            VerifyOffset(verifier, VT_ASSET_ADDRESS) &&
            verifier.VerifyString(asset_address()) &&
-           VerifyOffset(verifier, VT_ASSET_DEPENDENCY_HASH) &&
-           verifier.VerifyVector(asset_dependency_hash()) &&
            VerifyOffset(verifier, VT_INCLUDED_OBJECTS) &&
            verifier.VerifyVector(included_objects()) &&
            verifier.VerifyVectorOfTables(included_objects()) &&
@@ -380,9 +367,6 @@ struct UnityAsset FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
            verifier.VerifyVectorOfTables(representations()) &&
            VerifyOffset(verifier, VT_BUILD_USAGE_TAG_SET) &&
            verifier.VerifyVector(build_usage_tag_set()) &&
-           VerifyOffset(verifier, VT_REFERENCED_ASSET_HASHES) &&
-           verifier.VerifyVector(referenced_asset_hashes()) &&
-           verifier.VerifyVectorOfTables(referenced_asset_hashes()) &&
            verifier.EndTable();
   }
 };
@@ -397,9 +381,6 @@ struct UnityAssetBuilder {
   void add_asset_address(::flatbuffers::Offset<::flatbuffers::String> asset_address) {
     fbb_.AddOffset(UnityAsset::VT_ASSET_ADDRESS, asset_address);
   }
-  void add_asset_dependency_hash(::flatbuffers::Offset<::flatbuffers::Vector<uint8_t>> asset_dependency_hash) {
-    fbb_.AddOffset(UnityAsset::VT_ASSET_DEPENDENCY_HASH, asset_dependency_hash);
-  }
   void add_included_objects(::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<roulin_fbs::UnityObjectId>>> included_objects) {
     fbb_.AddOffset(UnityAsset::VT_INCLUDED_OBJECTS, included_objects);
   }
@@ -411,9 +392,6 @@ struct UnityAssetBuilder {
   }
   void add_build_usage_tag_set(::flatbuffers::Offset<::flatbuffers::Vector<uint8_t>> build_usage_tag_set) {
     fbb_.AddOffset(UnityAsset::VT_BUILD_USAGE_TAG_SET, build_usage_tag_set);
-  }
-  void add_referenced_asset_hashes(::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<roulin_fbs::UnityAssetHashEntry>>> referenced_asset_hashes) {
-    fbb_.AddOffset(UnityAsset::VT_REFERENCED_ASSET_HASHES, referenced_asset_hashes);
   }
   explicit UnityAssetBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
@@ -430,19 +408,15 @@ inline ::flatbuffers::Offset<UnityAsset> CreateUnityAsset(
     ::flatbuffers::FlatBufferBuilder &_fbb,
     ::flatbuffers::Offset<::flatbuffers::Vector<uint8_t>> guid = 0,
     ::flatbuffers::Offset<::flatbuffers::String> asset_address = 0,
-    ::flatbuffers::Offset<::flatbuffers::Vector<uint8_t>> asset_dependency_hash = 0,
     ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<roulin_fbs::UnityObjectId>>> included_objects = 0,
     ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<roulin_fbs::UnityObjectId>>> referenced_objects = 0,
     ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<roulin_fbs::UnityObjectId>>> representations = 0,
-    ::flatbuffers::Offset<::flatbuffers::Vector<uint8_t>> build_usage_tag_set = 0,
-    ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<roulin_fbs::UnityAssetHashEntry>>> referenced_asset_hashes = 0) {
+    ::flatbuffers::Offset<::flatbuffers::Vector<uint8_t>> build_usage_tag_set = 0) {
   UnityAssetBuilder builder_(_fbb);
-  builder_.add_referenced_asset_hashes(referenced_asset_hashes);
   builder_.add_build_usage_tag_set(build_usage_tag_set);
   builder_.add_representations(representations);
   builder_.add_referenced_objects(referenced_objects);
   builder_.add_included_objects(included_objects);
-  builder_.add_asset_dependency_hash(asset_dependency_hash);
   builder_.add_asset_address(asset_address);
   builder_.add_guid(guid);
   return builder_.Finish();
@@ -452,95 +426,24 @@ inline ::flatbuffers::Offset<UnityAsset> CreateUnityAssetDirect(
     ::flatbuffers::FlatBufferBuilder &_fbb,
     const std::vector<uint8_t> *guid = nullptr,
     const char *asset_address = nullptr,
-    const std::vector<uint8_t> *asset_dependency_hash = nullptr,
     const std::vector<::flatbuffers::Offset<roulin_fbs::UnityObjectId>> *included_objects = nullptr,
     const std::vector<::flatbuffers::Offset<roulin_fbs::UnityObjectId>> *referenced_objects = nullptr,
     const std::vector<::flatbuffers::Offset<roulin_fbs::UnityObjectId>> *representations = nullptr,
-    const std::vector<uint8_t> *build_usage_tag_set = nullptr,
-    const std::vector<::flatbuffers::Offset<roulin_fbs::UnityAssetHashEntry>> *referenced_asset_hashes = nullptr) {
+    const std::vector<uint8_t> *build_usage_tag_set = nullptr) {
   auto guid__ = guid ? _fbb.CreateVector<uint8_t>(*guid) : 0;
   auto asset_address__ = asset_address ? _fbb.CreateString(asset_address) : 0;
-  auto asset_dependency_hash__ = asset_dependency_hash ? _fbb.CreateVector<uint8_t>(*asset_dependency_hash) : 0;
   auto included_objects__ = included_objects ? _fbb.CreateVector<::flatbuffers::Offset<roulin_fbs::UnityObjectId>>(*included_objects) : 0;
   auto referenced_objects__ = referenced_objects ? _fbb.CreateVector<::flatbuffers::Offset<roulin_fbs::UnityObjectId>>(*referenced_objects) : 0;
   auto representations__ = representations ? _fbb.CreateVector<::flatbuffers::Offset<roulin_fbs::UnityObjectId>>(*representations) : 0;
   auto build_usage_tag_set__ = build_usage_tag_set ? _fbb.CreateVector<uint8_t>(*build_usage_tag_set) : 0;
-  auto referenced_asset_hashes__ = referenced_asset_hashes ? _fbb.CreateVector<::flatbuffers::Offset<roulin_fbs::UnityAssetHashEntry>>(*referenced_asset_hashes) : 0;
   return roulin_fbs::CreateUnityAsset(
       _fbb,
       guid__,
       asset_address__,
-      asset_dependency_hash__,
       included_objects__,
       referenced_objects__,
       representations__,
-      build_usage_tag_set__,
-      referenced_asset_hashes__);
-}
-
-struct UnityAssetHashEntry FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
-  typedef UnityAssetHashEntryBuilder Builder;
-  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
-    VT_GUID = 4,
-    VT_ASSET_DEPENDENCY_HASH = 6
-  };
-  const ::flatbuffers::Vector<uint8_t> *guid() const {
-    return GetPointer<const ::flatbuffers::Vector<uint8_t> *>(VT_GUID);
-  }
-  const ::flatbuffers::Vector<uint8_t> *asset_dependency_hash() const {
-    return GetPointer<const ::flatbuffers::Vector<uint8_t> *>(VT_ASSET_DEPENDENCY_HASH);
-  }
-  bool Verify(::flatbuffers::Verifier &verifier) const {
-    return VerifyTableStart(verifier) &&
-           VerifyOffset(verifier, VT_GUID) &&
-           verifier.VerifyVector(guid()) &&
-           VerifyOffset(verifier, VT_ASSET_DEPENDENCY_HASH) &&
-           verifier.VerifyVector(asset_dependency_hash()) &&
-           verifier.EndTable();
-  }
-};
-
-struct UnityAssetHashEntryBuilder {
-  typedef UnityAssetHashEntry Table;
-  ::flatbuffers::FlatBufferBuilder &fbb_;
-  ::flatbuffers::uoffset_t start_;
-  void add_guid(::flatbuffers::Offset<::flatbuffers::Vector<uint8_t>> guid) {
-    fbb_.AddOffset(UnityAssetHashEntry::VT_GUID, guid);
-  }
-  void add_asset_dependency_hash(::flatbuffers::Offset<::flatbuffers::Vector<uint8_t>> asset_dependency_hash) {
-    fbb_.AddOffset(UnityAssetHashEntry::VT_ASSET_DEPENDENCY_HASH, asset_dependency_hash);
-  }
-  explicit UnityAssetHashEntryBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
-        : fbb_(_fbb) {
-    start_ = fbb_.StartTable();
-  }
-  ::flatbuffers::Offset<UnityAssetHashEntry> Finish() {
-    const auto end = fbb_.EndTable(start_);
-    auto o = ::flatbuffers::Offset<UnityAssetHashEntry>(end);
-    return o;
-  }
-};
-
-inline ::flatbuffers::Offset<UnityAssetHashEntry> CreateUnityAssetHashEntry(
-    ::flatbuffers::FlatBufferBuilder &_fbb,
-    ::flatbuffers::Offset<::flatbuffers::Vector<uint8_t>> guid = 0,
-    ::flatbuffers::Offset<::flatbuffers::Vector<uint8_t>> asset_dependency_hash = 0) {
-  UnityAssetHashEntryBuilder builder_(_fbb);
-  builder_.add_asset_dependency_hash(asset_dependency_hash);
-  builder_.add_guid(guid);
-  return builder_.Finish();
-}
-
-inline ::flatbuffers::Offset<UnityAssetHashEntry> CreateUnityAssetHashEntryDirect(
-    ::flatbuffers::FlatBufferBuilder &_fbb,
-    const std::vector<uint8_t> *guid = nullptr,
-    const std::vector<uint8_t> *asset_dependency_hash = nullptr) {
-  auto guid__ = guid ? _fbb.CreateVector<uint8_t>(*guid) : 0;
-  auto asset_dependency_hash__ = asset_dependency_hash ? _fbb.CreateVector<uint8_t>(*asset_dependency_hash) : 0;
-  return roulin_fbs::CreateUnityAssetHashEntry(
-      _fbb,
-      guid__,
-      asset_dependency_hash__);
+      build_usage_tag_set__);
 }
 
 struct UnityScene FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
@@ -552,8 +455,7 @@ struct UnityScene FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
     VT_INCLUDED_TYPE_IDXS = 10,
     VT_GLOBAL_USAGE = 12,
     VT_BUILD_USAGE_TAG_SET = 14,
-    VT_PREFAB_DEPENDENCY_HASH = 16,
-    VT_REFERENCED_ASSET_HASHES = 18
+    VT_PREFAB_DEPENDENCY_HASH = 16
   };
   const ::flatbuffers::Vector<uint8_t> *guid() const {
     return GetPointer<const ::flatbuffers::Vector<uint8_t> *>(VT_GUID);
@@ -576,9 +478,6 @@ struct UnityScene FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   const ::flatbuffers::Vector<uint8_t> *prefab_dependency_hash() const {
     return GetPointer<const ::flatbuffers::Vector<uint8_t> *>(VT_PREFAB_DEPENDENCY_HASH);
   }
-  const ::flatbuffers::Vector<::flatbuffers::Offset<roulin_fbs::UnityAssetHashEntry>> *referenced_asset_hashes() const {
-    return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<roulin_fbs::UnityAssetHashEntry>> *>(VT_REFERENCED_ASSET_HASHES);
-  }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
            VerifyOffset(verifier, VT_GUID) &&
@@ -596,9 +495,6 @@ struct UnityScene FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
            verifier.VerifyVector(build_usage_tag_set()) &&
            VerifyOffset(verifier, VT_PREFAB_DEPENDENCY_HASH) &&
            verifier.VerifyVector(prefab_dependency_hash()) &&
-           VerifyOffset(verifier, VT_REFERENCED_ASSET_HASHES) &&
-           verifier.VerifyVector(referenced_asset_hashes()) &&
-           verifier.VerifyVectorOfTables(referenced_asset_hashes()) &&
            verifier.EndTable();
   }
 };
@@ -628,9 +524,6 @@ struct UnitySceneBuilder {
   void add_prefab_dependency_hash(::flatbuffers::Offset<::flatbuffers::Vector<uint8_t>> prefab_dependency_hash) {
     fbb_.AddOffset(UnityScene::VT_PREFAB_DEPENDENCY_HASH, prefab_dependency_hash);
   }
-  void add_referenced_asset_hashes(::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<roulin_fbs::UnityAssetHashEntry>>> referenced_asset_hashes) {
-    fbb_.AddOffset(UnityScene::VT_REFERENCED_ASSET_HASHES, referenced_asset_hashes);
-  }
   explicit UnitySceneBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
@@ -650,10 +543,8 @@ inline ::flatbuffers::Offset<UnityScene> CreateUnityScene(
     ::flatbuffers::Offset<::flatbuffers::Vector<uint32_t>> included_type_idxs = 0,
     ::flatbuffers::Offset<roulin_fbs::UnityBuildUsageTagGlobal> global_usage = 0,
     ::flatbuffers::Offset<::flatbuffers::Vector<uint8_t>> build_usage_tag_set = 0,
-    ::flatbuffers::Offset<::flatbuffers::Vector<uint8_t>> prefab_dependency_hash = 0,
-    ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<roulin_fbs::UnityAssetHashEntry>>> referenced_asset_hashes = 0) {
+    ::flatbuffers::Offset<::flatbuffers::Vector<uint8_t>> prefab_dependency_hash = 0) {
   UnitySceneBuilder builder_(_fbb);
-  builder_.add_referenced_asset_hashes(referenced_asset_hashes);
   builder_.add_prefab_dependency_hash(prefab_dependency_hash);
   builder_.add_build_usage_tag_set(build_usage_tag_set);
   builder_.add_global_usage(global_usage);
@@ -672,15 +563,13 @@ inline ::flatbuffers::Offset<UnityScene> CreateUnitySceneDirect(
     const std::vector<uint32_t> *included_type_idxs = nullptr,
     ::flatbuffers::Offset<roulin_fbs::UnityBuildUsageTagGlobal> global_usage = 0,
     const std::vector<uint8_t> *build_usage_tag_set = nullptr,
-    const std::vector<uint8_t> *prefab_dependency_hash = nullptr,
-    const std::vector<::flatbuffers::Offset<roulin_fbs::UnityAssetHashEntry>> *referenced_asset_hashes = nullptr) {
+    const std::vector<uint8_t> *prefab_dependency_hash = nullptr) {
   auto guid__ = guid ? _fbb.CreateVector<uint8_t>(*guid) : 0;
   auto scene_path__ = scene_path ? _fbb.CreateString(scene_path) : 0;
   auto referenced_objects__ = referenced_objects ? _fbb.CreateVector<::flatbuffers::Offset<roulin_fbs::UnityObjectId>>(*referenced_objects) : 0;
   auto included_type_idxs__ = included_type_idxs ? _fbb.CreateVector<uint32_t>(*included_type_idxs) : 0;
   auto build_usage_tag_set__ = build_usage_tag_set ? _fbb.CreateVector<uint8_t>(*build_usage_tag_set) : 0;
   auto prefab_dependency_hash__ = prefab_dependency_hash ? _fbb.CreateVector<uint8_t>(*prefab_dependency_hash) : 0;
-  auto referenced_asset_hashes__ = referenced_asset_hashes ? _fbb.CreateVector<::flatbuffers::Offset<roulin_fbs::UnityAssetHashEntry>>(*referenced_asset_hashes) : 0;
   return roulin_fbs::CreateUnityScene(
       _fbb,
       guid__,
@@ -689,8 +578,7 @@ inline ::flatbuffers::Offset<UnityScene> CreateUnitySceneDirect(
       included_type_idxs__,
       global_usage,
       build_usage_tag_set__,
-      prefab_dependency_hash__,
-      referenced_asset_hashes__);
+      prefab_dependency_hash__);
 }
 
 struct UnityBuildUsageTagGlobal FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {

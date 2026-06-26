@@ -83,42 +83,8 @@ func (rcv *UnityAsset) AssetAddress() []byte {
 	return nil
 }
 
-func (rcv *UnityAsset) AssetDependencyHash(j int) byte {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
-	if o != 0 {
-		a := rcv._tab.Vector(o)
-		return rcv._tab.GetByte(a + flatbuffers.UOffsetT(j*1))
-	}
-	return 0
-}
-
-func (rcv *UnityAsset) AssetDependencyHashLength() int {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
-	if o != 0 {
-		return rcv._tab.VectorLen(o)
-	}
-	return 0
-}
-
-func (rcv *UnityAsset) AssetDependencyHashBytes() []byte {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
-	if o != 0 {
-		return rcv._tab.ByteVector(o + rcv._tab.Pos)
-	}
-	return nil
-}
-
-func (rcv *UnityAsset) MutateAssetDependencyHash(j int, n byte) bool {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
-	if o != 0 {
-		a := rcv._tab.Vector(o)
-		return rcv._tab.MutateByte(a+flatbuffers.UOffsetT(j*1), n)
-	}
-	return false
-}
-
 func (rcv *UnityAsset) IncludedObjects(obj *UnityObjectId, j int) bool {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
 		x := rcv._tab.Vector(o)
 		x += flatbuffers.UOffsetT(j) * 4
@@ -130,7 +96,7 @@ func (rcv *UnityAsset) IncludedObjects(obj *UnityObjectId, j int) bool {
 }
 
 func (rcv *UnityAsset) IncludedObjectsLength() int {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
 		return rcv._tab.VectorLen(o)
 	}
@@ -138,7 +104,7 @@ func (rcv *UnityAsset) IncludedObjectsLength() int {
 }
 
 func (rcv *UnityAsset) ReferencedObjects(obj *UnityObjectId, j int) bool {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
 		x := rcv._tab.Vector(o)
 		x += flatbuffers.UOffsetT(j) * 4
@@ -150,7 +116,7 @@ func (rcv *UnityAsset) ReferencedObjects(obj *UnityObjectId, j int) bool {
 }
 
 func (rcv *UnityAsset) ReferencedObjectsLength() int {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
 		return rcv._tab.VectorLen(o)
 	}
@@ -158,7 +124,7 @@ func (rcv *UnityAsset) ReferencedObjectsLength() int {
 }
 
 func (rcv *UnityAsset) Representations(obj *UnityObjectId, j int) bool {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
 		x := rcv._tab.Vector(o)
 		x += flatbuffers.UOffsetT(j) * 4
@@ -170,7 +136,7 @@ func (rcv *UnityAsset) Representations(obj *UnityObjectId, j int) bool {
 }
 
 func (rcv *UnityAsset) RepresentationsLength() int {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
 		return rcv._tab.VectorLen(o)
 	}
@@ -178,7 +144,7 @@ func (rcv *UnityAsset) RepresentationsLength() int {
 }
 
 func (rcv *UnityAsset) BuildUsageTagSet(j int) byte {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
 		a := rcv._tab.Vector(o)
 		return rcv._tab.GetByte(a + flatbuffers.UOffsetT(j*1))
@@ -187,7 +153,7 @@ func (rcv *UnityAsset) BuildUsageTagSet(j int) byte {
 }
 
 func (rcv *UnityAsset) BuildUsageTagSetLength() int {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
 		return rcv._tab.VectorLen(o)
 	}
@@ -195,7 +161,7 @@ func (rcv *UnityAsset) BuildUsageTagSetLength() int {
 }
 
 func (rcv *UnityAsset) BuildUsageTagSetBytes() []byte {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
 		return rcv._tab.ByteVector(o + rcv._tab.Pos)
 	}
@@ -203,7 +169,7 @@ func (rcv *UnityAsset) BuildUsageTagSetBytes() []byte {
 }
 
 func (rcv *UnityAsset) MutateBuildUsageTagSet(j int, n byte) bool {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
 		a := rcv._tab.Vector(o)
 		return rcv._tab.MutateByte(a+flatbuffers.UOffsetT(j*1), n)
@@ -211,28 +177,8 @@ func (rcv *UnityAsset) MutateBuildUsageTagSet(j int, n byte) bool {
 	return false
 }
 
-func (rcv *UnityAsset) ReferencedAssetHashes(obj *UnityAssetHashEntry, j int) bool {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
-	if o != 0 {
-		x := rcv._tab.Vector(o)
-		x += flatbuffers.UOffsetT(j) * 4
-		x = rcv._tab.Indirect(x)
-		obj.Init(rcv._tab.Bytes, x)
-		return true
-	}
-	return false
-}
-
-func (rcv *UnityAsset) ReferencedAssetHashesLength() int {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
-	if o != 0 {
-		return rcv._tab.VectorLen(o)
-	}
-	return 0
-}
-
 func UnityAssetStart(builder *flatbuffers.Builder) {
-	builder.StartObject(8)
+	builder.StartObject(6)
 }
 func UnityAssetAddGuid(builder *flatbuffers.Builder, guid flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(guid), 0)
@@ -243,41 +189,29 @@ func UnityAssetStartGuidVector(builder *flatbuffers.Builder, numElems int) flatb
 func UnityAssetAddAssetAddress(builder *flatbuffers.Builder, assetAddress flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(1, flatbuffers.UOffsetT(assetAddress), 0)
 }
-func UnityAssetAddAssetDependencyHash(builder *flatbuffers.Builder, assetDependencyHash flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(2, flatbuffers.UOffsetT(assetDependencyHash), 0)
-}
-func UnityAssetStartAssetDependencyHashVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
-	return builder.StartVector(1, numElems, 1)
-}
 func UnityAssetAddIncludedObjects(builder *flatbuffers.Builder, includedObjects flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(3, flatbuffers.UOffsetT(includedObjects), 0)
+	builder.PrependUOffsetTSlot(2, flatbuffers.UOffsetT(includedObjects), 0)
 }
 func UnityAssetStartIncludedObjectsVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(4, numElems, 4)
 }
 func UnityAssetAddReferencedObjects(builder *flatbuffers.Builder, referencedObjects flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(4, flatbuffers.UOffsetT(referencedObjects), 0)
+	builder.PrependUOffsetTSlot(3, flatbuffers.UOffsetT(referencedObjects), 0)
 }
 func UnityAssetStartReferencedObjectsVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(4, numElems, 4)
 }
 func UnityAssetAddRepresentations(builder *flatbuffers.Builder, representations flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(5, flatbuffers.UOffsetT(representations), 0)
+	builder.PrependUOffsetTSlot(4, flatbuffers.UOffsetT(representations), 0)
 }
 func UnityAssetStartRepresentationsVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(4, numElems, 4)
 }
 func UnityAssetAddBuildUsageTagSet(builder *flatbuffers.Builder, buildUsageTagSet flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(6, flatbuffers.UOffsetT(buildUsageTagSet), 0)
+	builder.PrependUOffsetTSlot(5, flatbuffers.UOffsetT(buildUsageTagSet), 0)
 }
 func UnityAssetStartBuildUsageTagSetVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(1, numElems, 1)
-}
-func UnityAssetAddReferencedAssetHashes(builder *flatbuffers.Builder, referencedAssetHashes flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(7, flatbuffers.UOffsetT(referencedAssetHashes), 0)
-}
-func UnityAssetStartReferencedAssetHashesVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
-	return builder.StartVector(4, numElems, 4)
 }
 func UnityAssetEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()

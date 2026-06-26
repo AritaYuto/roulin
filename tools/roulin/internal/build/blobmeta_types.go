@@ -21,14 +21,13 @@ type UnityBlob struct {
 
 // UnityScene holds one scene's dependency data (IDependencyData.SceneInfo / SceneUsage / DependencyHash).
 type UnityScene struct {
-	Guid                  string                   `json:"guid"`                    // 32-char hex AssetDB GUID
-	ScenePath             string                   `json:"scene_path"`              // SceneDependencyInfo.m_Scene
-	ReferencedObjects     []UnityObjectId          `json:"referenced_objects"`      // .m_ReferencedObjects
-	IncludedTypeIdxs      []uint32                 `json:"included_type_idxs"`      // .m_IncludedTypes → UnityBlob.Types indices
-	GlobalUsage           UnityBuildUsageTagGlobal `json:"global_usage"`            // .m_GlobalUsage
-	BuildUsageTagSet      string                   `json:"build_usage_tag_set"`     // base64 of SceneUsage[guid]
-	PrefabDependencyHash  string                   `json:"prefab_dependency_hash"`  // 32-char hex Hash128 (DependencyHash[guid])
-	ReferencedAssetHashes []UnityAssetHashEntry    `json:"referenced_asset_hashes"` // same semantics as UnityAsset.ReferencedAssetHashes
+	Guid                 string                   `json:"guid"`                   // 32-char hex AssetDB GUID
+	ScenePath            string                   `json:"scene_path"`             // SceneDependencyInfo.m_Scene
+	ReferencedObjects    []UnityObjectId          `json:"referenced_objects"`     // .m_ReferencedObjects
+	IncludedTypeIdxs     []uint32                 `json:"included_type_idxs"`     // .m_IncludedTypes → UnityBlob.Types indices
+	GlobalUsage          UnityBuildUsageTagGlobal `json:"global_usage"`           // .m_GlobalUsage
+	BuildUsageTagSet     string                   `json:"build_usage_tag_set"`    // base64 of SceneUsage[guid]
+	PrefabDependencyHash string                   `json:"prefab_dependency_hash"` // 32-char hex Hash128 (DependencyHash[guid])
 }
 
 // UnityBuildUsageTagGlobal mirrors BuildUsageTagGlobal; fields are name-addressed (not positional) to survive future Unity additions without schema churn.
@@ -49,20 +48,12 @@ type UsageGlobalBoolField struct {
 
 // UnityAsset holds one asset's dependency data (IDependencyData.AssetInfo / AssetUsage / ExtendedData).
 type UnityAsset struct {
-	Guid                  string                `json:"guid"`                    // 32-char lower-hex AssetDB GUID
-	AssetAddress          string                `json:"asset_address"`           // SBP AssetLoadInfo.address (Addressables address, or asset path fallback)
-	AssetDependencyHash   string                `json:"asset_dependency_hash"`   // 32-char lower-hex Hash128, may be empty
-	IncludedObjects       []UnityObjectId       `json:"included_objects"`
-	ReferencedObjects     []UnityObjectId       `json:"referenced_objects"`
-	Representations       []UnityObjectId       `json:"representations"`
-	BuildUsageTagSet      string                `json:"build_usage_tag_set"`     // base64 of BuildUsageTagSet binary
-	ReferencedAssetHashes []UnityAssetHashEntry `json:"referenced_asset_hashes"` // (guid → AssetDependencyHash) snapshot, sorted by guid
-}
-
-// UnityAssetHashEntry is the (guid, hash) pair captured for each project-resident dependency.
-type UnityAssetHashEntry struct {
-	Guid                string `json:"guid"`                  // 32-char lower-hex
-	AssetDependencyHash string `json:"asset_dependency_hash"` // 32-char lower-hex Hash128
+	Guid              string          `json:"guid"`                // 32-char lower-hex AssetDB GUID
+	AssetAddress      string          `json:"asset_address"`       // SBP AssetLoadInfo.address (Addressables address, or asset path fallback)
+	IncludedObjects   []UnityObjectId `json:"included_objects"`
+	ReferencedObjects []UnityObjectId `json:"referenced_objects"`
+	Representations   []UnityObjectId `json:"representations"`
+	BuildUsageTagSet  string          `json:"build_usage_tag_set"` // base64 of BuildUsageTagSet binary
 }
 
 // UnityObjectId mirrors SBP's ObjectIdentifier struct.

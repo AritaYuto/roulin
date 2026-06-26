@@ -4,13 +4,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
+	"github.com/KirisameMarisa/roulin/tools/roulin/internal/build/vcs"
 	roulinlog "github.com/KirisameMarisa/roulin/tools/roulin/internal/log"
 	"github.com/KirisameMarisa/roulin/tools/roulin/internal/serve/server"
 	"github.com/KirisameMarisa/roulin/tools/roulin/internal/serve/sse"
@@ -18,6 +21,7 @@ import (
 	"github.com/KirisameMarisa/roulin/tools/roulin/internal/storage/cache"
 	_ "github.com/KirisameMarisa/roulin/tools/roulin/internal/storage/cloud" // register s3:// factory
 	"github.com/KirisameMarisa/roulin/tools/roulin/internal/storage/local"
+	"github.com/caarlos0/env/v11"
 	"github.com/spf13/cobra"
 )
 
@@ -66,30 +70,38 @@ var (
 	flagPort   int
 	flagLogDir string
 
-	flagReadOnly bool
+	flagVCSProjectRoot string
+	flagVCSPathspecs   string
 )
 
 func init() {
-	rootCmd.PersistentFlags().StringVar(&flagLogDir, "log-dir", "./logs",
+	var e serveEnv
+	if err := env.Parse(&e); err != nil {
+		log.Fatalf("env parse: %v", err)
+	}
+
+	rootCmd.PersistentFlags().StringVar(&flagLogDir, "log-dir", e.LogDir,
 		"Log file output directory")
 
-	serveCmd.Flags().StringVar(&flagStorage, "storage", "",
+	serveCmd.Flags().StringVar(&flagStorage, "storage", e.Storage,
 		"Cloud storage URL (s3://bucket/prefix). Required.")
-	serveCmd.Flags().StringVar(&flagStorageEndpoint, "storage-endpoint", "",
+	serveCmd.Flags().StringVar(&flagStorageEndpoint, "storage-endpoint", e.StorageEndpoint,
 		"Custom S3 endpoint URL (e.g. http://minio:9000). Only applies to s3:// storage.")
-	serveCmd.Flags().BoolVar(&flagStoragePathStyle, "storage-path-style", false,
+	serveCmd.Flags().BoolVar(&flagStoragePathStyle, "storage-path-style", e.StoragePathStyle,
 		"Use path-style S3 URLs. Required for MinIO; not needed for AWS S3.")
-	serveCmd.Flags().StringVar(&flagStorageRegion, "storage-region", "",
+	serveCmd.Flags().StringVar(&flagStorageRegion, "storage-region", e.StorageRegion,
 		"S3 region override. Defaults to env / us-east-1 when --storage-endpoint is set.")
 
-	serveCmd.Flags().Int64Var(&flagCacheMemoryBytes, "cache-memory", 0,
+	serveCmd.Flags().Int64Var(&flagCacheMemoryBytes, "cache-memory", e.CacheMemoryBytes,
 		"In-memory LRU cache (L1) size in bytes. 0 disables.")
-	serveCmd.Flags().StringVar(&flagCacheDir, "cache-dir", "",
+	serveCmd.Flags().StringVar(&flagCacheDir, "cache-dir", e.CacheDir,
 		"FS cache (L2) directory, behind the in-memory L1. Empty disables.")
 
-	serveCmd.Flags().IntVar(&flagPort, "port", 8765, "Listen port")
-	serveCmd.Flags().BoolVar(&flagReadOnly, "read-only", false,
-		"Disable POST endpoints; serve GET / HEAD only.")
+	serveCmd.Flags().IntVar(&flagPort, "port", e.Port, "Listen port")
+	serveCmd.Flags().StringVar(&flagVCSProjectRoot, "vcs-project-root", e.VCSProjectRoot,
+		"Engine project's git working tree. Exposes GET /diff?since=<sha>. Empty disables /diff.")
+	serveCmd.Flags().StringVar(&flagVCSPathspecs, "vcs-pathspecs", e.VCSPathspecs,
+		"Comma-separated pathspecs scoping /diff (e.g. client/p/Assets,client/p/Packages). Empty queries the entire repo.")
 
 	rootCmd.AddCommand(serveCmd)
 }
@@ -103,7 +115,7 @@ func Execute() {
 
 func runServe(cmd *cobra.Command, _ []string) error {
 	if flagStorage == "" {
-		return fmt.Errorf("--storage is required (e.g. s3://roulin-test)")
+		return fmt.Errorf("--storage is required (set via flag or ROULIN_STORAGE env var, e.g. s3://roulin-test)")
 	}
 
 	ctx := context.Background()
@@ -128,31 +140,43 @@ func runServe(cmd *cobra.Command, _ []string) error {
 		store = storage.NewCachedStorage(cloud, caches...)
 	}
 
-	var writer *server.Writer
-	if !flagReadOnly {
-		// HotReloadStorage targets L1 cache when available; otherwise a fresh MemoryStorage
-		// so hot-reload writes never reach the canonical cloud store.
-		var hotReload storage.Storage
-		if cs, ok := store.(*storage.CachedStorage); ok && len(cs.Caches()) > 0 {
-			hotReload = cs.Caches()[0]
-		} else {
-			hotReload = cache.NewMemory(hotReloadFallbackBytes)
-		}
-		writer = &server.Writer{
-			Storage:          store,
-			HotReloadStorage: hotReload,
-			Broadcaster:      sse.New(),
+	var hotReload storage.Storage
+	if cs, ok := store.(*storage.CachedStorage); ok && len(cs.Caches()) > 0 {
+		hotReload = cs.Caches()[0]
+	} else {
+		hotReload = cache.NewMemory(hotReloadFallbackBytes)
+	}
+	writer := &server.Writer{
+		Storage:          store,
+		HotReloadStorage: hotReload,
+		Broadcaster:      sse.New(),
+	}
+
+	var pathspecs []string
+	for _, p := range strings.Split(flagVCSPathspecs, ",") {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			pathspecs = append(pathspecs, p)
 		}
 	}
 
-	srv := server.New(store, writer, flagPort)
+	var vcsAdapter vcs.VCSAdapter
+	if flagVCSProjectRoot != "" {
+		vcsAdapter = &vcs.GitAdapter{
+			WorkDir:   flagVCSProjectRoot,
+			Pathspecs: pathspecs,
+		}
+	}
+
+	srv := server.New(store, writer, vcsAdapter, flagPort)
 	slog.Info("server started",
 		"port", flagPort,
 		"storage", flagStorage,
 		"endpoint", flagStorageEndpoint,
 		"cache_memory_bytes", flagCacheMemoryBytes,
 		"cache_dir", flagCacheDir,
-		"writable", writer != nil,
+		"vcs_project_root", flagVCSProjectRoot,
+		"vcs_pathspecs", pathspecs,
 	)
 
 	sigctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
@@ -169,7 +193,6 @@ func runServe(cmd *cobra.Command, _ []string) error {
 
 	select {
 	case err := <-serveErr:
-		// Server exited on its own (e.g. bind failure); skip Shutdown.
 		return err
 	case <-sigctx.Done():
 		slog.Info("shutdown signal received, draining...", "grace", shutdownGrace)
@@ -184,3 +207,4 @@ func runServe(cmd *cobra.Command, _ []string) error {
 	slog.Info("server stopped cleanly")
 	return nil
 }
+

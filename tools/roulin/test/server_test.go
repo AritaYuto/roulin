@@ -27,7 +27,7 @@ func setupParcelServer(t *testing.T) (*httptest.Server, string) {
 	os.MkdirAll(filepath.Join(dir, "blobs", "ab"), 0o755)
 	os.WriteFile(filepath.Join(dir, "blobs", "ab", hash), []byte("blobdata"), 0o644)
 
-	srv := server.New(local.NewFile(dir), nil, 0)
+	srv := server.New(local.NewFile(dir), nil, nil, 0)
 	ts := httptest.NewServer(srv.Handler)
 	return ts, hash
 }

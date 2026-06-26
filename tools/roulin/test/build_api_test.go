@@ -25,7 +25,7 @@ func setupWritableServer(t *testing.T) (*httptest.Server, string) {
 	t.Helper()
 	dir := t.TempDir()
 	st := local.NewFile(dir)
-	srv := server.New(st, &server.Writer{Storage: st}, 0)
+	srv := server.New(st, &server.Writer{Storage: st}, nil, 0)
 	ts := httptest.NewServer(srv.Handler)
 	t.Cleanup(ts.Close)
 	return ts, dir
@@ -60,7 +60,7 @@ func TestPostBlob_RoundtripAndIdempotent(t *testing.T) {
 
 func TestPostBlob_ReadOnlyServer(t *testing.T) {
 	dir := t.TempDir()
-	srv := server.New(local.NewFile(dir), nil /* no writer */, 0)
+	srv := server.New(local.NewFile(dir), nil /* no writer */, nil, 0)
 	ts := httptest.NewServer(srv.Handler)
 	defer ts.Close()
 
