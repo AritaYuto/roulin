@@ -219,6 +219,7 @@ namespace Roulin.Editor.Build
 
             // Per-concern SBP context objects (no shared mutable god-bag).
             var uploadResults = new BlobUploadResults();
+            var catalog = new RoulinCatalog();
 
             buildTasks.Add(new RoulinPublishBlobs
             {
@@ -249,7 +250,7 @@ namespace Roulin.Editor.Build
 
             var rc = ContentPipeline.BuildAssetBundles(
                 buildParams, content, out var sbpResults, buildTasks,
-                sbpTimingLogger, view, uploadResults);
+                sbpTimingLogger, view, uploadResults, catalog);
             if (rc < ReturnCode.Success)
             {
                 throw new Exception($"ContentPipeline.BuildAssetBundles failed: {rc}");
@@ -258,6 +259,7 @@ namespace Roulin.Editor.Build
             Debug.Log($"[RoulinBuild] Scriptable Build Pipeline done ({sbpResults.BundleInfos.Count} bundle(s))");
             markPhase(phaseSw, "2. Scriptable Build Pipeline ContentPipeline.BuildAssetBundles");
 
+            var report = BuildReport.Compose(serverUrl, revision, catalog);
             report.LogSummary(settings.Verbose);
             var reportPath = report.WriteJson(outputDir);
             Debug.Log($"[RoulinBuild] build report → {reportPath}");

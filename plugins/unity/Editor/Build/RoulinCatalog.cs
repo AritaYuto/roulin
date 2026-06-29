@@ -1,18 +1,22 @@
 using System;
 using System.Collections.Generic;
+using UnityEditor.Build.Pipeline.Interfaces;
 
 namespace Roulin.Editor.Build
 {
     // Build-time in-memory model of the catalog that becomes /parcels/{rev}
     // on the server.
     //
-    // Constructed fresh in RoulinPublishParcel from
+    // Populated by RoulinPublishParcel from
     //   - AddressablesGroupsView (addressable assets per bundle)
     //   - IBundleBuildResults  (SBP-built bundle set)
     //   - IBundleWriteData     (SBP dep closure)
     //   - IBlobUploadResults   (blob hash + size from upload)
     // then serialised to the wire Parcel for POST.
-    public sealed class RoulinCatalog
+    //
+    // Exposed as an SBP IContextObject so BuildReport (outside the pipeline)
+    // can read the assembled entries after the pipeline returns.
+    public sealed class RoulinCatalog : IContextObject
     {
         // One bundle's record in the catalog.
         public sealed class Entry

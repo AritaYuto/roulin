@@ -12,9 +12,9 @@ namespace Roulin.Editor.Build
     // Post-build report: in-memory DTO that is both the on-disk JSON
     // (roulin-build-report.json) and the human summary printed to console.
     //
-    // Covers the bundles RoulinPublishBlobs uploaded this run (the delta in
-    // incremental mode; the full set on a full publish). Per-bundle entry
-    // metadata is pulled from the immutable Addressables view.
+    // Built from the RoulinCatalog that RoulinPublishParcel assembled — the
+    // catalog already merges Addressables-side entry data, blob upload
+    // results, and SBP dep closure, so the report is just a projection.
     public class BuildReport
     {
         public string server;
@@ -43,8 +43,7 @@ namespace Roulin.Editor.Build
         public static BuildReport Compose(
             string server,
             string revision,
-            IAddressablesGroupsView view,
-            IBlobUploadResults uploadResults)
+            RoulinCatalog catalog)
         {
             var r = new BuildReport
             {
@@ -52,26 +51,32 @@ namespace Roulin.Editor.Build
                 revision = revision,
                 generated_utc = DateTime.UtcNow.ToString("o"),
             };
-            foreach (var bundleName in uploadResults.Bundles)
+            foreach (var entry in catalog.Bundles)
             {
-                if (!uploadResults.TryGet(bundleName, out var hash, out var size))
-                {
-                    continue;
-                }
                 var b = new BuildReportBundle
                 {
-                    name = bundleName,
-                    binary_hash = hash,
-                    size_bytes = size
+                    name = entry.Name,
+                    binary_hash = entry.BlobHash,
+                    size_bytes = entry.SizeBytes
                 };
-                foreach (var e in view.GetEntries(bundleName))
+                foreach (var addr in entry.Addresses)
                 {
-                    var be = new BuildReportEntry { address = e.Address };
-                    if (e.Labels != null)
+                    var be = new BuildReportEntry { address = addr.Address };
+                    if (addr.Labels != null)
                     {
-                        be.labels = new List<string>(e.Labels);
+                        be.labels = new List<string>(addr.Labels);
                     }
                     b.entries.Add(be);
+                }
+                // Resolve dep bundle names to hex blob hashes via the catalog
+                // so the on-disk report stays stable across renames.
+                foreach (var depName in entry.DepBundleNames)
+                {
+                    var depEntry = catalog.Get(depName);
+                    if (depEntry != null && !string.IsNullOrEmpty(depEntry.BlobHash))
+                    {
+                        b.dependency_hashes.Add(depEntry.BlobHash);
+                    }
                 }
                 r.entry_count += b.entries.Count;
                 r.bundles.Add(b);
@@ -101,14 +106,14 @@ namespace Roulin.Editor.Build
             if (verbose)
             {
                 sb.AppendLine();
-                sb.AppendLine("  Bundle                            Size       Hash         Entries");
-                sb.AppendLine("  --------------------------------  ---------  -----------  -------");
+                sb.AppendLine("  Bundle                            Size       Hash         Entries  Deps");
+                sb.AppendLine("  --------------------------------  ---------  -----------  -------  ----");
                 foreach (var b in bundles)
                 {
                     var h12 = string.IsNullOrEmpty(b.binary_hash) ? "(missing)" : b.binary_hash[..12];
                     sb.AppendLine(
                         $"  {b.name,-32}  {RoulinUtil.FormatBytes(b.size_bytes),9}  {h12,-11}  " +
-                        $"{b.entries.Count,7}");
+                        $"{b.entries.Count,7}  {b.dependency_hashes.Count,4}");
                 }
             }
 
@@ -128,6 +133,7 @@ namespace Roulin.Editor.Build
         public string binary_hash;
         public long size_bytes;
         public List<BuildReportEntry> entries = new();
+        public List<string> dependency_hashes = new();
     }
 
     [Serializable]

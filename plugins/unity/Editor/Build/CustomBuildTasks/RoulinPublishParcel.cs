@@ -29,6 +29,13 @@ namespace Roulin.Editor.Build.CustomBuildTasks
 
         [InjectContext(ContextUsage.In)]
         private IBlobUploadResults _uploadResults;
+
+        // Output: catalog the task assembles. The instance is constructed by
+        // RoulinBuildScript and passed in as a SBP context object; this task
+        // fills it. Lets BuildReport (running outside the pipeline) read the
+        // same data without recomputing dep closure.
+        [InjectContext(ContextUsage.In)]
+        private RoulinCatalog _catalog;
 #pragma warning restore 649
 
         public int Version => 1;
@@ -65,8 +72,8 @@ namespace Roulin.Editor.Build.CustomBuildTasks
                     "RoulinPublishParcel.AllBundleNames is required when BaseRevision is set");
             }
 
-            var catalog = BuildCatalog();
-            var parcel = catalog.ToParcel();
+            PopulateCatalog(_catalog);
+            var parcel = _catalog.ToParcel();
             if (incremental)
             {
                 parcel.base_revision = BaseRevision;
@@ -88,13 +95,12 @@ namespace Roulin.Editor.Build.CustomBuildTasks
         // Assemble the in-memory RoulinCatalog from the SBP-built bundle set
         // + per-bundle blob upload result + Addressables-side entries +
         // SBP-derived dep closure.
-        private RoulinCatalog BuildCatalog()
+        private void PopulateCatalog(RoulinCatalog catalog)
         {
             var depClosure = RoulinBundleDepClosure.Compute(
                 _writeData.FileToBundle,
                 _writeData.AssetToFiles);
 
-            var catalog = new RoulinCatalog();
             foreach (var kv in _sbpResults.BundleInfos)
             {
                 var name = kv.Key;
@@ -127,7 +133,6 @@ namespace Roulin.Editor.Build.CustomBuildTasks
             Debug.Log(
                 $"[RoulinPublishParcel] catalog assembled: {catalog.Count} entries, " +
                 $"dep edges across closure");
-            return catalog;
         }
     }
 
