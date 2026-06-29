@@ -5,11 +5,11 @@ using UnityEditor;
 
 namespace Roulin.Editor.Tests
 {
-    // Proves the core building block for VCS-diff incremental builds:
-    // given the AssetBundleBuild[] that WalkAddressableGroups produces,
-    // we can reverse-map assetPath → bundle in O(1). If this does not
-    // hold, the whole VCS-diff approach is blocked.
-    public class BundleLookupTests
+    // Exercises the path → bundle reverse lookup that drives VCS-diff
+    // incremental builds. AddressablesGroupsView.FromBundleBuilds is the
+    // test-only factory that bypasses AddressableAssetSettings and builds
+    // just the reverse index from hand-rolled AssetBundleBuild[].
+    public class AddressablesGroupsViewTests
     {
         private static AssetBundleBuild MakeBuild(string name, params string[] assets)
         {
@@ -22,47 +22,47 @@ namespace Roulin.Editor.Tests
         }
 
         [Test]
-        public void GetBundleFor_ResolvesAssetToOwningBundle()
+        public void GetBundle_ResolvesAssetToOwningBundle()
         {
-            var lookup = BundleLookup.From(new[]
+            var view = AddressablesGroupsView.FromBundleBuilds(new[]
             {
                 MakeBuild("ui_main", "Assets/UI/A.prefab", "Assets/UI/B.prefab"),
                 MakeBuild("shared", "Assets/Shared/Atlas.png")
             });
 
-            Assert.AreEqual("ui_main", lookup.GetBundleFor("Assets/UI/A.prefab"));
-            Assert.AreEqual("ui_main", lookup.GetBundleFor("Assets/UI/B.prefab"));
-            Assert.AreEqual("shared", lookup.GetBundleFor("Assets/Shared/Atlas.png"));
+            Assert.AreEqual("ui_main", view.GetBundle("Assets/UI/A.prefab"));
+            Assert.AreEqual("ui_main", view.GetBundle("Assets/UI/B.prefab"));
+            Assert.AreEqual("shared", view.GetBundle("Assets/Shared/Atlas.png"));
         }
 
         [Test]
-        public void GetBundleFor_ReturnsNullForUnknownAsset()
+        public void GetBundle_ReturnsNullForUnknownAsset()
         {
-            var lookup = BundleLookup.From(new[]
+            var view = AddressablesGroupsView.FromBundleBuilds(new[]
             {
                 MakeBuild("ui_main", "Assets/UI/A.prefab")
             });
 
-            Assert.IsNull(lookup.GetBundleFor("Assets/Unknown/Z.prefab"));
+            Assert.IsNull(view.GetBundle("Assets/Unknown/Z.prefab"));
         }
 
         [Test]
-        public void GetBundleFor_ReturnsNullForEmptyOrNullPath()
+        public void GetBundle_ReturnsNullForEmptyOrNullPath()
         {
-            var lookup = BundleLookup.From(new[]
+            var view = AddressablesGroupsView.FromBundleBuilds(new[]
             {
                 MakeBuild("ui_main", "Assets/UI/A.prefab")
             });
 
-            Assert.IsNull(lookup.GetBundleFor(null));
-            Assert.IsNull(lookup.GetBundleFor(string.Empty));
+            Assert.IsNull(view.GetBundle(null));
+            Assert.IsNull(view.GetBundle(string.Empty));
         }
 
         [Test]
-        public void From_ThrowsWhenSameAssetAppearsInTwoBundles()
+        public void FromBundleBuilds_ThrowsWhenSameAssetAppearsInTwoBundles()
         {
             var ex = Assert.Throws<System.InvalidOperationException>(() =>
-                BundleLookup.From(new[]
+                AddressablesGroupsView.FromBundleBuilds(new[]
                 {
                     MakeBuild("ui_main", "Assets/UI/A.prefab"),
                     MakeBuild("ui_dup", "Assets/UI/A.prefab")
@@ -80,7 +80,7 @@ namespace Roulin.Editor.Tests
             // ui_main, one in shared, one outside any bundle. Affected
             // bundle set should be {ui_main, shared} — deduplicated and
             // the orphan file dropped.
-            var lookup = BundleLookup.From(new[]
+            var view = AddressablesGroupsView.FromBundleBuilds(new[]
             {
                 MakeBuild("ui_main", "Assets/UI/A.prefab", "Assets/UI/B.prefab"),
                 MakeBuild("shared", "Assets/Shared/Atlas.png")
@@ -94,7 +94,7 @@ namespace Roulin.Editor.Tests
                 "Assets/Outside/Loose.txt"
             };
 
-            var affected = lookup.ResolveAffectedBundles(changed);
+            var affected = view.ResolveAffectedBundles(changed);
 
             Assert.AreEqual(2, affected.Count);
             Assert.Contains("ui_main", new List<string>(affected));
@@ -104,26 +104,26 @@ namespace Roulin.Editor.Tests
         [Test]
         public void ResolveAffectedBundles_NoChanges_ReturnsEmptySet()
         {
-            var lookup = BundleLookup.From(new[]
+            var view = AddressablesGroupsView.FromBundleBuilds(new[]
             {
                 MakeBuild("ui_main", "Assets/UI/A.prefab")
             });
 
-            Assert.IsEmpty(lookup.ResolveAffectedBundles(new string[0]));
-            Assert.IsEmpty(lookup.ResolveAffectedBundles(null));
+            Assert.IsEmpty(view.ResolveAffectedBundles(new string[0]));
+            Assert.IsEmpty(view.ResolveAffectedBundles(null));
         }
 
         [Test]
-        public void From_HandlesNullAssetNames()
+        public void FromBundleBuilds_HandlesNullAssetNames()
         {
-            var lookup = BundleLookup.From(new[]
+            var view = AddressablesGroupsView.FromBundleBuilds(new[]
             {
                 new AssetBundleBuild { assetBundleName = "empty", assetNames = null },
                 MakeBuild("ui_main", "Assets/UI/A.prefab")
             });
 
-            Assert.AreEqual(1, lookup.Count);
-            Assert.AreEqual("ui_main", lookup.GetBundleFor("Assets/UI/A.prefab"));
+            Assert.AreEqual(1, view.LookupCount);
+            Assert.AreEqual("ui_main", view.GetBundle("Assets/UI/A.prefab"));
         }
     }
 }

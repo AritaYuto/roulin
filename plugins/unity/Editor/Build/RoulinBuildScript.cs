@@ -97,8 +97,7 @@ namespace Roulin.Editor.Build
             using var client = new RoulinServerClient(serverUrl);
 
             var phaseSw = Stopwatch.StartNew();
-            var walk = WalkAddressableGroups.Run(aas);
-            var lookup = BundleLookup.From(walk.BundleBuilds);
+            var view = AddressablesGroupsView.From(aas);
             markPhase(phaseSw, "1. groups walk");
 
             // Ask the server which revision it considers "base", and which paths
@@ -149,7 +148,7 @@ namespace Roulin.Editor.Build
             if (!incremental)
             {
                 changedBundles = new HashSet<string>(
-                    walk.BundleBuilds.Select(b => b.assetBundleName), StringComparer.Ordinal);
+                    view.BundleBuilds.Select(b => b.assetBundleName), StringComparer.Ordinal);
                 Debug.Log($"[RoulinBuild] full rebuild: {changedBundles.Count} bundles");
             }
             else
@@ -157,19 +156,19 @@ namespace Roulin.Editor.Build
                 changedBundles = new HashSet<string>(StringComparer.Ordinal);
                 if (uncommittedUnityPaths != null)
                 {
-                    foreach (var name in lookup.ResolveAffectedBundles(uncommittedUnityPaths))
+                    foreach (var name in view.ResolveAffectedBundles(uncommittedUnityPaths))
                     {
                         changedBundles.Add(name);
                     }
                 }
             }
 
-            var sbpInputNames = ClosureCompute.Downward(changedBundles, walk.BundleBuilds, lookup);
-            var sbpInputBuilds = walk.BundleBuilds
+            var sbpInputNames = BundleDependencyResolver.Resolve(changedBundles, view);
+            var sbpInputBuilds = view.BundleBuilds
                 .Where(b => sbpInputNames.Contains(b.assetBundleName))
                 .ToList();
             Debug.Log(
-                $"[RoulinBuild] SBP input = {sbpInputBuilds.Count}/{walk.BundleBuilds.Count} " +
+                $"[RoulinBuild] SBP input = {sbpInputBuilds.Count}/{view.BundleBuilds.Count} " +
                 $"(changed={changedBundles.Count}, +closure={sbpInputNames.Count - changedBundles.Count})");
 
             // Cap-to-N detail log so single-file iterations are auditable.
@@ -218,10 +217,8 @@ namespace Roulin.Editor.Build
             var buildTasks = DefaultBuildTasks.Create(
                 DefaultBuildTasks.Preset.AssetBundleShaderAndScriptExtraction);
 
-            var roulinContext = new RoulinBuildSharedContext(
-                walk.BundleBuilds, walk.Inputs, walk.BundleToAssetGroup, walk.AssetEntries, aas, target);
-
-            buildTasks.Add(new RoulinGenerateLocationLists());
+            // Per-concern SBP context objects (no shared mutable god-bag).
+            var uploadResults = new BlobUploadResults();
 
             buildTasks.Add(new RoulinPublishBlobs
             {
@@ -242,7 +239,7 @@ namespace Roulin.Editor.Build
             if (incremental)
             {
                 publishParcel.BaseRevision = baseRevision;
-                publishParcel.AllBundleNames = walk.BundleBuilds
+                publishParcel.AllBundleNames = view.BundleBuilds
                     .Select(b => b.assetBundleName)
                     .ToList();
             }
@@ -252,7 +249,7 @@ namespace Roulin.Editor.Build
 
             var rc = ContentPipeline.BuildAssetBundles(
                 buildParams, content, out var sbpResults, buildTasks,
-                sbpTimingLogger, roulinContext);
+                sbpTimingLogger, view, uploadResults);
             if (rc < ReturnCode.Success)
             {
                 throw new Exception($"ContentPipeline.BuildAssetBundles failed: {rc}");
@@ -261,15 +258,6 @@ namespace Roulin.Editor.Build
             Debug.Log($"[RoulinBuild] Scriptable Build Pipeline done ({sbpResults.BundleInfos.Count} bundle(s))");
             markPhase(phaseSw, "2. Scriptable Build Pipeline ContentPipeline.BuildAssetBundles");
 
-            var locationCount = 0;
-            long totalBytes = 0;
-            foreach (var bi in walk.Inputs.Values)
-            {
-                locationCount += bi.Entries.Count;
-                totalBytes += bi.SizeBytes;
-            }
-
-            var report = BuildReport.Compose(serverUrl, revision, walk.Inputs, locationCount);
             report.LogSummary(settings.Verbose);
             var reportPath = report.WriteJson(outputDir);
             Debug.Log($"[RoulinBuild] build report → {reportPath}");
@@ -286,7 +274,7 @@ namespace Roulin.Editor.Build
             return new AddressablesPlayerBuildResult
             {
                 OutputPath = outputDir,
-                LocationCount = locationCount
+                LocationCount = report.LocationCount
             };
         }
 

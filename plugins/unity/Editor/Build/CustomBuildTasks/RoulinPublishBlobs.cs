@@ -13,18 +13,23 @@ using System.Runtime.InteropServices;
 
 namespace Roulin.Editor.Build.CustomBuildTasks
 {
-    internal sealed class RoulinPublishBlobs : RoulinBuildTaskBase
+    // Uploads every bundle SBP produced and records (name → hash + size)
+    // in IBlobUploadResults for downstream catalog construction.
+    internal sealed class RoulinPublishBlobs : IBuildTask
     {
 #pragma warning disable 649
         [InjectContext(ContextUsage.In)]
         private IBundleBuildResults _sbpResults;
+
+        [InjectContext(ContextUsage.In)]
+        private IBlobUploadResults _uploadResults;
 #pragma warning restore 649
-        public override int Version => 1;
+
+        public int Version => 1;
 
         public RoulinServerClient Server { get; set; }
         public string OutputDir { get; set; }
         public bool Verbose { get; set; }
-
 
         [DllImport("roulin_core", CallingConvention = CallingConvention.Cdecl)]
         private static extern unsafe void rln_compute_blake3(void* data, UIntPtr len, byte* outHash);
@@ -36,11 +41,10 @@ namespace Roulin.Editor.Build.CustomBuildTasks
             {
                 rln_compute_blake3(dp, (UIntPtr)data.Length, hp);
             }
-
             return BitConverter.ToString(hash).Replace("-", "").ToLowerInvariant();
         }
 
-        public override ReturnCode Run()
+        public ReturnCode Run()
         {
             if (Server == null)
             {
@@ -56,8 +60,7 @@ namespace Roulin.Editor.Build.CustomBuildTasks
 
         private ReturnCode RunCore()
         {
-            var inputs = roulinContext.BundleInputs;
-
+            var sink = (BlobUploadResults)_uploadResults;
             var counters = new Counters();
             var total = _sbpResults.BundleInfos.Count;
 
@@ -66,17 +69,16 @@ namespace Roulin.Editor.Build.CustomBuildTasks
             using var throttle = new SemaphoreSlim(MaxParallel, MaxParallel);
             var tasks = new List<Task>(total);
 
-            // BundleInfos is stable post-writer; direct iteration is safe.
             foreach (var kv in _sbpResults.BundleInfos)
             {
-                var bi = inputs[kv.Key];
+                var bundleName = kv.Key;
                 var fileName = kv.Value.FileName;
                 tasks.Add(Task.Run(async () =>
                 {
                     await throttle.WaitAsync(srcToken.Token);
                     try
                     {
-                        await UploadOne(bi, fileName, counters, srcToken.Token);
+                        await UploadOne(bundleName, fileName, sink, counters, srcToken.Token);
                     }
                     finally
                     {
@@ -86,7 +88,6 @@ namespace Roulin.Editor.Build.CustomBuildTasks
                 }, srcToken.Token));
             }
 
-            // EditorUtility requires main thread; this loop owns the progress bar.
             for (int i = 0; i < total; i++)
             {
                 sem.Wait(srcToken.Token);
@@ -101,16 +102,12 @@ namespace Roulin.Editor.Build.CustomBuildTasks
                 }
             }
 
-            // Drain stragglers. SBP convention: WaitAny over WhenAll for fast-fail.
             Task.WaitAny(Task.WhenAll(tasks));
 
             var fatal = 0;
             foreach (var t in tasks)
             {
-                if (t.Exception == null)
-                {
-                    continue;
-                }
+                if (t.Exception == null) continue;
                 fatal++;
                 Debug.LogException(t.Exception);
             }
@@ -135,8 +132,9 @@ namespace Roulin.Editor.Build.CustomBuildTasks
         }
 
         private async Task UploadOne(
-            BundleInput bi,
+            string bundleName,
             string fileName,
+            BlobUploadResults sink,
             Counters counters,
             CancellationToken ct)
         {
@@ -146,7 +144,7 @@ namespace Roulin.Editor.Build.CustomBuildTasks
             if (!File.Exists(path))
             {
                 throw new FileNotFoundException(
-                    $"SBP reported bundle '{bi.Name}' but file is missing", path);
+                    $"SBP reported bundle '{bundleName}' but file is missing", path);
             }
 
             var bytes = File.ReadAllBytes(path);
@@ -158,7 +156,7 @@ namespace Roulin.Editor.Build.CustomBuildTasks
                 if (Verbose)
                 {
                     Debug.Log(
-                        $"[RoulinPublishBlobs]   skipped  {bi.Name,-32} {RoulinUtil.FormatBytes(bytes.LongLength),10} " +
+                        $"[RoulinPublishBlobs]   skipped  {bundleName,-32} {RoulinUtil.FormatBytes(bytes.LongLength),10} " +
                         $"→ {hash[..12]}… (unchanged)");
                 }
             }
@@ -169,13 +167,17 @@ namespace Roulin.Editor.Build.CustomBuildTasks
                 if (Verbose)
                 {
                     Debug.Log(
-                        $"[RoulinPublishBlobs]   uploaded {bi.Name,-32} {RoulinUtil.FormatBytes(bytes.LongLength),10} " +
+                        $"[RoulinPublishBlobs]   uploaded {bundleName,-32} {RoulinUtil.FormatBytes(bytes.LongLength),10} " +
                         $"→ {hash[..12]}…");
                 }
             }
 
-            bi.BinaryHash = hash;
-            bi.SizeBytes = bytes.LongLength;
+            // Sink mutation must be thread-safe; lock the dict directly
+            // since Dictionary<,>.Add isn't.
+            lock (sink)
+            {
+                sink.Add(bundleName, hash, bytes.LongLength);
+            }
             Interlocked.Add(ref counters.TotalBytes, bytes.LongLength);
         }
     }
