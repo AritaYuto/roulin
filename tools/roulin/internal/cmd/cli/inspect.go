@@ -33,7 +33,6 @@ var (
 	inspectFlagBaseURL  string
 	inspectFlagRevision string
 	inspectFlagJSON     bool
-	inspectFlagWithMeta bool
 )
 
 func init() {
@@ -43,8 +42,6 @@ func init() {
 		"revision id to inspect (required)")
 	inspectParcelCmd.Flags().BoolVar(&inspectFlagJSON, "json", false,
 		"emit JSON instead of human-readable text")
-	inspectParcelCmd.Flags().BoolVar(&inspectFlagWithMeta, "with-meta", false,
-		"also fetch and display each blob's blob_meta sidecar (per-blob dependency data)")
 	_ = inspectParcelCmd.MarkFlagRequired("base-url")
 	_ = inspectParcelCmd.MarkFlagRequired("revision")
 	rootCmd.AddCommand(inspectParcelCmd)
@@ -59,11 +56,11 @@ type inspectAddress struct {
 }
 
 type inspectBlob struct {
-	BlobHash  string             `json:"blob_hash"`
-	SizeBytes uint64             `json:"size_bytes,omitempty"`
-	Deps      []string           `json:"deps"`
-	Addresses []inspectAddress   `json:"addresses"`
-	Meta      *build.BlobMeta `json:"meta,omitempty"`
+	BlobHash  string           `json:"blob_hash"`
+	Name      string           `json:"name,omitempty"`
+	SizeBytes uint64           `json:"size_bytes,omitempty"`
+	Deps      []string         `json:"deps"`
+	Addresses []inspectAddress `json:"addresses"`
 }
 
 type inspectResult struct {
@@ -100,31 +97,13 @@ func runInspectParcel(cmd *cobra.Command, _ []string) error {
 		if deps == nil {
 			deps = []string{}
 		}
-		hashHex := hex.EncodeToString(e.BlobHash[:])
-		blob := inspectBlob{
-			BlobHash:  hashHex,
+		result.Blobs = append(result.Blobs, inspectBlob{
+			BlobHash:  hex.EncodeToString(e.BlobHash[:]),
+			Name:      e.Name,
 			SizeBytes: e.SizeBytes,
 			Deps:      deps,
 			Addresses: addrs,
-		}
-		if inspectFlagWithMeta {
-			// 404 is the expected case for bundles whose blob_meta was
-			// never uploaded (SBP-synthesized UnityBuiltIn.bundle /
-			// UnityMonoScripts.bundle); leave blob.Meta nil and let
-			// the text renderer print "Meta: (none)". Surface other
-			// transport errors so they aren't silently swallowed.
-			m, err := fetchBlobMeta(base, hashHex)
-			switch {
-			case err == nil:
-				blob.Meta = m
-			case isNotFound(err):
-				// expected, no-op
-			default:
-				fmt.Fprintf(cmd.ErrOrStderr(),
-					"blob_meta fetch for %s failed: %v\n", hashHex[:12], err)
-			}
-		}
-		result.Blobs = append(result.Blobs, blob)
+		})
 	}
 
 	if inspectFlagJSON {
@@ -139,7 +118,11 @@ func printInspectText(w io.Writer, r inspectResult) error {
 	fmt.Fprintf(w, "Parcel at %s/index/%s\n", r.BaseURL, r.Revision)
 	fmt.Fprintf(w, "Blobs: %d\n\n", len(r.Blobs))
 	for _, b := range r.Blobs {
-		fmt.Fprintf(w, "  %s\n", b.BlobHash)
+		if b.Name != "" {
+			fmt.Fprintf(w, "  %s  [%s]\n", b.BlobHash, b.Name)
+		} else {
+			fmt.Fprintf(w, "  %s\n", b.BlobHash)
+		}
 		if b.SizeBytes > 0 {
 			fmt.Fprintf(w, "    Size: %d bytes\n", b.SizeBytes)
 		}
@@ -158,59 +141,11 @@ func printInspectText(w io.Writer, r inspectResult) error {
 			if a.AssetID != "" {
 				suffix += "  id=" + a.AssetID
 			}
-			fmt.Fprintf(w, "      %-40s%s\n",
-				a.AddressStr, suffix)
-		}
-		if inspectFlagWithMeta {
-			if b.Meta != nil {
-				printBlobMetaSection(w, b.Meta)
-			} else {
-				fmt.Fprintln(w, "    Meta: (none)")
-			}
+			fmt.Fprintf(w, "      %-40s%s\n", a.AddressStr, suffix)
 		}
 		fmt.Fprintln(w)
 	}
 	return nil
-}
-
-func printBlobMetaSection(w io.Writer, m *build.BlobMeta) {
-	fmt.Fprintf(w, "    Meta:\n")
-	fmt.Fprintf(w, "      body_type: %s\n", m.BodyType)
-	if m.UnityBody == nil {
-		fmt.Fprintln(w, "      (no unity_body)")
-		return
-	}
-	ub := m.UnityBody
-	fmt.Fprintf(w, "      unity_version=%s sbp_version=%s\n", ub.UnityVersion, ub.SbpVersion)
-	fmt.Fprintf(w, "      types=%d assets=%d scenes=%d\n",
-		len(ub.Types), len(ub.Assets), len(ub.Scenes))
-	for i, a := range ub.Assets {
-		fmt.Fprintf(w, "      [asset %d] %s\n", i, a.AssetAddress)
-		fmt.Fprintf(w, "        included=%d referenced=%d representations=%d\n",
-			len(a.IncludedObjects), len(a.ReferencedObjects), len(a.Representations))
-	}
-	for i, s := range ub.Scenes {
-		fmt.Fprintf(w, "      [scene %d] %s\n", i, s.ScenePath)
-		fmt.Fprintf(w, "        referenced=%d included_type_idxs=%d global_usage(uint=%d bool=%d)\n",
-			len(s.ReferencedObjects), len(s.IncludedTypeIdxs),
-			len(s.GlobalUsage.UintFields), len(s.GlobalUsage.BoolFields))
-	}
-}
-
-func fetchBlobMeta(base, hash string) (*build.BlobMeta, error) {
-	if len(hash) < 2 {
-		return nil, fmt.Errorf("invalid hash: %q", hash)
-	}
-	url := fmt.Sprintf("%s/blobs_meta/%s/%s", base, hash[:2], hash)
-	body, err := httpGetBytes(url)
-	if err != nil {
-		return nil, err
-	}
-	var m build.BlobMeta
-	if err := json.Unmarshal(body, &m); err != nil {
-		return nil, fmt.Errorf("decode: %w", err)
-	}
-	return &m, nil
 }
 
 // ---- HTTP helper -----------------------------------------------------------
@@ -231,8 +166,4 @@ func httpGetBytes(url string) ([]byte, error) {
 }
 
 // errNotFound is returned by httpGetBytes when the server responds with 404.
-// Callers use isNotFound() to distinguish "expected absence" from transport
-// errors.
 var errNotFound = fmt.Errorf("404 not found")
-
-func isNotFound(err error) bool { return err == errNotFound }

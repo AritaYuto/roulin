@@ -251,27 +251,25 @@ tasks:
   # Server-side ops (against a running roulin-server)
   #
   #   task inspect rev=20260427183144
-  #   task inspect rev=... meta=1                       # also fetch each blob's blob_meta
   #   task inspect:json rev=... base=http://localhost:8765
-  #   task inspect:json rev=... meta=1                  # JSON output, with meta
   #   task revisions:list remote=s3://roulin-test
   # ===========================================================================
 
   inspect:
-    desc: 'Walk a deployed Parcel; rev=<rev> required, optional base=<url>, meta=1 to include blob_meta'
+    desc: 'Walk a deployed Parcel; rev=<rev> required, optional base=<url>'
     dir: '{{.TOOLS_DIR}}'
     requires:
       vars: [rev]
     cmds:
-      - go run ./cmd/roulin-cli inspect-parcel --base-url {{.base | default .DEFAULT_BASE_URL}} --revision {{.rev}} {{if .meta}}--with-meta{{end}}
+      - go run ./cmd/roulin-cli inspect-parcel --base-url {{.base | default .DEFAULT_BASE_URL}} --revision {{.rev}}
 
   inspect:json:
-    desc: 'Same as inspect, JSON output; meta=1 to include blob_meta'
+    desc: 'Same as inspect, JSON output'
     dir: '{{.TOOLS_DIR}}'
     requires:
       vars: [rev]
     cmds:
-      - go run ./cmd/roulin-cli inspect-parcel --base-url {{.base | default .DEFAULT_BASE_URL}} --revision {{.rev}} --json {{if .meta}}--with-meta{{end}}
+      - go run ./cmd/roulin-cli inspect-parcel --base-url {{.base | default .DEFAULT_BASE_URL}} --revision {{.rev}} --json
 
   revisions:list:
     desc: List revisions on a remote; remote=s3://bucket/prefix required

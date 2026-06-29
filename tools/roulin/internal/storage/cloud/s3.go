@@ -120,44 +120,6 @@ func (s *S3Storage) ListIndexRevisions(ctx context.Context) ([]storage.ObjectInf
 	return out, nil
 }
 
-func (s *S3Storage) PutBlobMeta(ctx context.Context, hash string, data []byte) error {
-	return s.put(ctx, storage.BlobMetaKey(hash), data)
-}
-
-func (s *S3Storage) GetBlobMeta(ctx context.Context, hash string) ([]byte, error) {
-	return s.get(ctx, storage.BlobMetaKey(hash))
-}
-
-func (s *S3Storage) ListBlobMetaHashes(ctx context.Context) ([]string, error) {
-	const blobMetaPrefix = "blobs_meta/"
-	full := s.fullKey(blobMetaPrefix)
-	var out []string
-	paginator := s3.NewListObjectsV2Paginator(s.client, &s3.ListObjectsV2Input{
-		Bucket: aws.String(s.bucket),
-		Prefix: aws.String(full),
-	})
-	for paginator.HasMorePages() {
-		page, err := paginator.NextPage(ctx)
-		if err != nil {
-			return nil, err
-		}
-		for _, obj := range page.Contents {
-			// Key shape: {prefix}blobs_meta/{xx}/{hash}. Extract trailing hash.
-			rel := strings.TrimPrefix(*obj.Key, full)
-			slash := strings.IndexByte(rel, '/')
-			if slash < 0 {
-				continue
-			}
-			hash := rel[slash+1:]
-			if hash == "" || strings.Contains(hash, "/") {
-				continue
-			}
-			out = append(out, hash)
-		}
-	}
-	return out, nil
-}
-
 func (s *S3Storage) put(ctx context.Context, key string, data []byte) error {
 	_, err := s.client.PutObject(ctx, &s3.PutObjectInput{
 		Bucket: aws.String(s.bucket),

@@ -91,11 +91,6 @@ func TestS3Storage_RoundTrip(t *testing.T) {
 			func(k string) ([]byte, error) { return st.GetBlob(ctx, k) },
 		},
 		{
-			"blob_meta",
-			func(k string, d []byte) error { return st.PutBlobMeta(ctx, k, d) },
-			func(k string) ([]byte, error) { return st.GetBlobMeta(ctx, k) },
-		},
-		{
 			"index",
 			func(k string, d []byte) error { return st.PutIndex(ctx, k, d) },
 			func(k string) ([]byte, error) { return st.GetIndex(ctx, k) },

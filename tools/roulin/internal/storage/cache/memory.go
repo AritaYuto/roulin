@@ -83,38 +83,6 @@ func (m *MemoryStorage) ListIndexRevisions(_ context.Context) ([]storage.ObjectI
 	return out, nil
 }
 
-func (m *MemoryStorage) PutBlobMeta(_ context.Context, hash string, data []byte) error {
-	m.put(storage.BlobMetaKey(hash), data)
-	return nil
-}
-
-func (m *MemoryStorage) GetBlobMeta(_ context.Context, hash string) ([]byte, error) {
-	return m.get(storage.BlobMetaKey(hash))
-}
-
-func (m *MemoryStorage) ListBlobMetaHashes(_ context.Context) ([]string, error) {
-	const prefix = "blobs_meta/"
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	var out []string
-	for k := range m.items {
-		if !strings.HasPrefix(k, prefix) {
-			continue
-		}
-		rel := strings.TrimPrefix(k, prefix)
-		slash := strings.IndexByte(rel, '/')
-		if slash < 0 {
-			continue
-		}
-		hash := rel[slash+1:]
-		if hash == "" || strings.Contains(hash, "/") {
-			continue
-		}
-		out = append(out, hash)
-	}
-	return out, nil
-}
-
 func (m *MemoryStorage) put(key string, data []byte) {
 	dataSize := int64(len(data))
 	if m.maxBytes > 0 && dataSize > m.maxBytes {

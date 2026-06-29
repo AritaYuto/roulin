@@ -1,4 +1,3 @@
-using Roulin.Editor.Build.Meta;
 using System;
 using System.Collections.Generic;
 using System.Net;
@@ -101,37 +100,6 @@ namespace Roulin.Editor.Build
             }
         }
 
-        // Uploads a per-blob RoulinBlobMeta sidecar.
-        public async Task PostBlobMeta(string blobHash, RoulinBlobMeta meta, CancellationToken ct = default)
-        {
-            var prefix = blobHash[..2];
-            var url = $"{_baseUrl}/blobs_meta/{prefix}/{blobHash}";
-            var json = JsonUtility.ToJson(meta);
-            var (status, respBody) = await SendWithRetry(
-                () => JsonRequest(HttpMethod.Post, url, json), ct);
-            if ((int)status >= 400)
-            {
-                throw new Exception(
-                    $"POST /blobs_meta/{prefix}/{blobHash} failed: {(int)status} {status}: {respBody}");
-            }
-        }
-
-        // Lists every blob_meta sidecar hash currently on the server.
-        // No per-revision filtering; staleness is harmless because blob_meta is content-addressed.
-        public async Task<List<string>> ListBlobMetaHashes(CancellationToken ct = default)
-        {
-            var url = $"{_baseUrl}/blobs_meta/";
-            var (status, body) = await SendWithRetry(
-                () => new HttpRequestMessage(HttpMethod.Get, url), ct);
-            if ((int)status >= 400)
-            {
-                throw new Exception(
-                    $"GET /blobs_meta/ failed: {(int)status} {status}: {body}");
-            }
-            var parsed = JsonUtility.FromJson<ListBlobMetasResponse>(body);
-            return parsed?.hashes ?? new List<string>();
-        }
-
         // Fetches the VCS diff used by the incremental build path. `sinceSha`
         // is the revision recorded in the last published catalog; pass null or
         // empty to skip the committed diff (caller falls back to full rebuild).
@@ -148,22 +116,6 @@ namespace Roulin.Editor.Build
                 throw new Exception($"GET /diff failed: {(int)status} {status}: {body}");
             }
             return JsonUtility.FromJson<DiffResponse>(body);
-        }
-
-        // Fetches the per-blob sidecar. Returns null on 404.
-        public async Task<RoulinBlobMeta> GetBlobMeta(string blobHash, CancellationToken ct = default)
-        {
-            var prefix = blobHash[..2];
-            var url = $"{_baseUrl}/blobs_meta/{prefix}/{blobHash}";
-            var (status, body) = await SendWithRetry(
-                () => new HttpRequestMessage(HttpMethod.Get, url), ct);
-            if (status == HttpStatusCode.NotFound) return null;
-            if ((int)status >= 400)
-            {
-                throw new Exception(
-                    $"GET /blobs_meta/{prefix}/{blobHash} failed: {(int)status} {status}: {body}");
-            }
-            return JsonUtility.FromJson<RoulinBlobMeta>(body);
         }
 
         // ---- retry plumbing -------------------------------------------------
@@ -231,12 +183,6 @@ namespace Roulin.Editor.Build
         private class HashResponse
         {
             public string hash;
-        }
-
-        [Serializable]
-        private class ListBlobMetasResponse
-        {
-            public List<string> hashes;
         }
 
         [Serializable]

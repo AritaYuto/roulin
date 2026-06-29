@@ -22,14 +22,12 @@ table IndexEntry {
   size_bytes:ulong;    // blob binary size
   deps:[string];       // hex BLAKE3 of bundle's transitive dep closure (self excluded).
   addresses:[Address]; // 0..N addresses living in this blob
+  name:string;         // asset name.
 }
 
 table Index {
   entries:[IndexEntry]; // sorted by blob_hash
   types:[string];       // interned engine-specific type identifiers
-                        //   (Unity: AssemblyQualifiedName). Same pattern
-                        //   as blob_meta.UnityBlob.types[].
-                        //   Address.type_idxs[] points here.
 }
 
 root_type Index;

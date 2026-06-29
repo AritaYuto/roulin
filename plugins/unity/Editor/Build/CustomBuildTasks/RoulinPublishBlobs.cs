@@ -1,4 +1,3 @@
-using Roulin.Editor.Build.Meta;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -23,7 +22,6 @@ namespace Roulin.Editor.Build.CustomBuildTasks
         public override int Version => 1;
 
         public RoulinServerClient Server { get; set; }
-        public MetaClient Meta { get; set; }
         public string OutputDir { get; set; }
         public bool Verbose { get; set; }
 
@@ -49,16 +47,7 @@ namespace Roulin.Editor.Build.CustomBuildTasks
                 throw new InvalidOperationException(
                     "RoulinPublishBlobs.Server is null — set before adding to task list");
             }
-
-            try
-            {
-                return RunCore();
-            }
-            finally
-            {
-                // Last consumer; release RoulinUnityBlob dict (~1 GB) for GC.
-                roulinContext.BlobMetasByBundle.Clear();
-            }
+            return RunCore();
         }
 
         // Cap in-flight HTTP. Unbounded fan-out exhausts HttpClient's connection
@@ -68,7 +57,6 @@ namespace Roulin.Editor.Build.CustomBuildTasks
         private ReturnCode RunCore()
         {
             var inputs = roulinContext.BundleInputs;
-            var blobMetasByBundle = roulinContext.BlobMetasByBundle;
 
             var counters = new Counters();
             var total = _sbpResults.BundleInfos.Count;
@@ -88,7 +76,7 @@ namespace Roulin.Editor.Build.CustomBuildTasks
                     await throttle.WaitAsync(srcToken.Token);
                     try
                     {
-                        await UploadOne(bi, fileName, blobMetasByBundle, counters, srcToken.Token);
+                        await UploadOne(bi, fileName, counters, srcToken.Token);
                     }
                     finally
                     {
@@ -116,8 +104,6 @@ namespace Roulin.Editor.Build.CustomBuildTasks
             // Drain stragglers. SBP convention: WaitAny over WhenAll for fast-fail.
             Task.WaitAny(Task.WhenAll(tasks));
 
-            // blob-body upload throws on non-2xx → fatal. blob_meta failures
-            // are swallowed inside UploadOne, so anything reaching here is fatal.
             var fatal = 0;
             foreach (var t in tasks)
             {
@@ -135,28 +121,22 @@ namespace Roulin.Editor.Build.CustomBuildTasks
 
             Debug.Log(
                 $"[RoulinPublishBlobs] {counters.Uploaded} uploaded, " +
-                $"{counters.Skipped} skipped (unchanged)" +
-                (counters.BlobMeta > 0 ? $", {counters.BlobMeta} blob_meta sidecar(s)" : "") +
-                $" — total {RoulinUtil.FormatBytes(counters.TotalBytes)}");
+                $"{counters.Skipped} skipped (unchanged) — " +
+                $"total {RoulinUtil.FormatBytes(counters.TotalBytes)}");
 
             return ReturnCode.Success;
         }
 
-        // Reference-held so async workers can Interlocked.Increment fields
-        // (ref params aren't allowed in async methods).
         private sealed class Counters
         {
             public int Uploaded;
             public int Skipped;
-            public int BlobMeta;
             public long TotalBytes;
         }
 
-        // Mutates only the BundleInput it owns + counters via Interlocked.
         private async Task UploadOne(
             BundleInput bi,
             string fileName,
-            Dictionary<string, RoulinUnityBlob> blobMetasByBundle,
             Counters counters,
             CancellationToken ct)
         {
@@ -197,30 +177,6 @@ namespace Roulin.Editor.Build.CustomBuildTasks
             bi.BinaryHash = hash;
             bi.SizeBytes = bytes.LongLength;
             Interlocked.Add(ref counters.TotalBytes, bytes.LongLength);
-
-            // blob_meta is idempotent on server; failures are non-fatal —
-            // game still ships, only warm-rebuild speedup is forfeited.
-            if (blobMetasByBundle.TryGetValue(bi.Name, out var unityBlob))
-            {
-                var envelope = new RoulinBlobMeta(unityBlob, hash);
-                try
-                {
-                    await Meta.PublishBlobMeta(hash, envelope);
-                    Interlocked.Increment(ref counters.BlobMeta);
-                    if (Verbose)
-                    {
-                        Debug.Log(
-                            $"[RoulinPublishBlobs]   blob_meta  {bi.Name,-32} " +
-                            $"→ {hash[..12]}… ({unityBlob.assets.Count} asset(s))");
-                    }
-                }
-                catch (Exception ex)
-                {
-                    Debug.LogWarning(
-                        $"[RoulinPublishBlobs] blob_meta upload failed for {bi.Name}: {ex.Message} " +
-                        "— warm rebuild speedup for this blob is lost, build continues");
-                }
-            }
         }
     }
 }

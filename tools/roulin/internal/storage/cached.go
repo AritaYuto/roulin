@@ -91,37 +91,6 @@ func (c *CachedStorage) ListIndexRevisions(ctx context.Context) ([]ObjectInfo, e
 	return c.cloud.ListIndexRevisions(ctx)
 }
 
-func (c *CachedStorage) PutBlobMeta(ctx context.Context, hash string, data []byte) error {
-	if err := c.cloud.PutBlobMeta(ctx, hash, data); err != nil {
-		return err
-	}
-	for _, cache := range c.caches {
-		if err := cache.PutBlobMeta(ctx, hash, data); err != nil {
-			slog.Warn("cache PutBlobMeta failed", "hash", hash, "err", err)
-		}
-	}
-	return nil
-}
-
-func (c *CachedStorage) ListBlobMetaHashes(ctx context.Context) ([]string, error) {
-	return c.cloud.ListBlobMetaHashes(ctx)
-}
-
-func (c *CachedStorage) GetBlobMeta(ctx context.Context, hash string) ([]byte, error) {
-	for i, cache := range c.caches {
-		if data, err := cache.GetBlobMeta(ctx, hash); err == nil {
-			c.backfillBlobMeta(ctx, hash, data, i)
-			return data, nil
-		}
-	}
-	data, err := c.cloud.GetBlobMeta(ctx, hash)
-	if err != nil {
-		return nil, err
-	}
-	c.backfillBlobMeta(ctx, hash, data, len(c.caches))
-	return data, nil
-}
-
 func (c *CachedStorage) backfillBlob(ctx context.Context, hash string, data []byte, hitAt int) {
 	for i := 0; i < hitAt; i++ {
 		if err := c.caches[i].PutBlob(ctx, hash, data); err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -134,14 +103,6 @@ func (c *CachedStorage) backfillIndex(ctx context.Context, rev string, data []by
 	for i := 0; i < hitAt; i++ {
 		if err := c.caches[i].PutIndex(ctx, rev, data); err != nil && !errors.Is(err, os.ErrNotExist) {
 			slog.Warn("cache backfill PutIndex failed", "layer", i, "rev", rev, "err", err)
-		}
-	}
-}
-
-func (c *CachedStorage) backfillBlobMeta(ctx context.Context, hash string, data []byte, hitAt int) {
-	for i := 0; i < hitAt; i++ {
-		if err := c.caches[i].PutBlobMeta(ctx, hash, data); err != nil && !errors.Is(err, os.ErrNotExist) {
-			slog.Warn("cache backfill PutBlobMeta failed", "layer", i, "hash", hash, "err", err)
 		}
 	}
 }

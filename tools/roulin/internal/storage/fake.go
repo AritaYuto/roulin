@@ -68,37 +68,6 @@ func (f *FakeStorage) ListIndexRevisions(_ context.Context) ([]ObjectInfo, error
 	return out, nil
 }
 
-func (f *FakeStorage) PutBlobMeta(_ context.Context, hash string, data []byte) error {
-	return f.put(BlobMetaKey(hash), data)
-}
-
-func (f *FakeStorage) GetBlobMeta(_ context.Context, hash string) ([]byte, error) {
-	return f.get(BlobMetaKey(hash))
-}
-
-func (f *FakeStorage) ListBlobMetaHashes(_ context.Context) ([]string, error) {
-	const prefix = "blobs_meta/"
-	f.mu.RLock()
-	defer f.mu.RUnlock()
-	var out []string
-	for k := range f.objects {
-		if !strings.HasPrefix(k, prefix) {
-			continue
-		}
-		rel := strings.TrimPrefix(k, prefix)
-		slash := strings.IndexByte(rel, '/')
-		if slash < 0 {
-			continue
-		}
-		hash := rel[slash+1:]
-		if hash == "" || strings.Contains(hash, "/") {
-			continue
-		}
-		out = append(out, hash)
-	}
-	return out, nil
-}
-
 // Keys returns a sorted snapshot of all stored keys.
 func (f *FakeStorage) Keys() []string {
 	f.mu.RLock()

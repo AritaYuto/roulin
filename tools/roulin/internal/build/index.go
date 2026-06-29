@@ -62,6 +62,11 @@ func BuildIndexBytes(entries []IndexEntry, types []string) []byte {
 func writeIndexEntry(b *flatbuffers.Builder, e IndexEntry) flatbuffers.UOffsetT {
 	hashOff := b.CreateByteVector(e.BlobHash[:])
 
+	var nameOff flatbuffers.UOffsetT
+	if e.Name != "" {
+		nameOff = b.CreateString(e.Name)
+	}
+
 	var depsOff flatbuffers.UOffsetT
 	if len(e.Deps) > 0 {
 		strOffsets := make([]flatbuffers.UOffsetT, len(e.Deps))
@@ -98,6 +103,9 @@ func writeIndexEntry(b *flatbuffers.Builder, e IndexEntry) flatbuffers.UOffsetT 
 	}
 	if addressesOff != 0 {
 		fbs.IndexEntryAddAddresses(b, addressesOff)
+	}
+	if nameOff != 0 {
+		fbs.IndexEntryAddName(b, nameOff)
 	}
 	return fbs.IndexEntryEnd(b)
 }
@@ -208,6 +216,7 @@ func ParseIndexBytes(buf []byte) (entries []IndexEntry, types []string) {
 			SizeBytes: fbEntry.SizeBytes(),
 			Deps:      deps,
 			Addresses: addresses,
+			Name:      string(fbEntry.Name()),
 		})
 	}
 

@@ -40,38 +40,47 @@ namespace Roulin.Editor.Build.CustomBuildTasks
                 }
             }
 
-            if (_sbpResults.BundleInfos.Count != inputs.Count)
+            // With filter-at-input, SBP only builds a subset of the walked
+            // bundles, so sbpResults.Count <= inputs.Count is the normal case.
+            // Verify only that every SBP bundle exists in inputs (catches a
+            // bundle SBP produced but neither the walk nor the synthesis
+            // covered).
+            foreach (var kv in _sbpResults.BundleInfos)
             {
-                throw new Exception(
-                    "[RoulinGenerateLocationLists] sbp/inputs mismatch: SBP produced " +
-                    $"{_sbpResults.BundleInfos.Count} bundles but inputs has {inputs.Count} " +
-                    "after synthesis — bundle drop detected, fix the build pipeline");
+                if (!inputs.ContainsKey(kv.Key))
+                {
+                    throw new Exception(
+                        $"[RoulinGenerateLocationLists] SBP produced bundle '{kv.Key}' " +
+                        "absent from inputs after synthesis — fix the build pipeline");
+                }
             }
 
             var closure = RoulinBundleDepClosure.Compute(
                 _writeData.FileToBundle,
                 _writeData.AssetToFiles);
 
+            // Only fill DepBundleNames for bundles SBP actually built; the
+            // remaining bundles are carried over from the base revision by
+            // the server during POST /parcels merge.
             var closureEdges = 0;
-            foreach (var kv in inputs)
+            foreach (var kv in _sbpResults.BundleInfos)
             {
-                var bi = kv.Value;
+                if (!inputs.TryGetValue(kv.Key, out var bi)) continue;
                 if (closure.Immediate.TryGetValue(bi.Name, out var imm))
                 {
                     bi.DepBundleNames.AddRange(imm);
                 }
-
                 if (closure.Expanded.TryGetValue(bi.Name, out var exp))
                 {
                     bi.DepBundleNames.AddRange(exp);
                 }
-
                 closureEdges += bi.DepBundleNames.Count;
             }
 
             Debug.Log(
-                $"[RoulinGenerateLocationLists] sbp-only synthesized={sbpOnlyBundles}, " +
-                $"dep closure resolved: {closureEdges} edge(s) across {inputs.Count} bundle(s)");
+                $"[RoulinGenerateLocationLists] sbp-built={_sbpResults.BundleInfos.Count}, " +
+                $"sbp-only synthesized={sbpOnlyBundles}, " +
+                $"dep closure: {closureEdges} edge(s)");
 
             return ReturnCode.Success;
         }

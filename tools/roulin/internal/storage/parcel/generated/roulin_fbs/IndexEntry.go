@@ -124,8 +124,16 @@ func (rcv *IndexEntry) AddressesLength() int {
 	return 0
 }
 
+func (rcv *IndexEntry) Name() []byte {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
+	if o != 0 {
+		return rcv._tab.ByteVector(o + rcv._tab.Pos)
+	}
+	return nil
+}
+
 func IndexEntryStart(builder *flatbuffers.Builder) {
-	builder.StartObject(4)
+	builder.StartObject(5)
 }
 func IndexEntryAddBlobHash(builder *flatbuffers.Builder, blobHash flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(blobHash), 0)
@@ -147,6 +155,9 @@ func IndexEntryAddAddresses(builder *flatbuffers.Builder, addresses flatbuffers.
 }
 func IndexEntryStartAddressesVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(4, numElems, 4)
+}
+func IndexEntryAddName(builder *flatbuffers.Builder, name flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(4, flatbuffers.UOffsetT(name), 0)
 }
 func IndexEntryEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()

@@ -19,4 +19,6 @@ type IndexEntry struct {
 	SizeBytes uint64
 	Deps      []string // hex BLAKE3 of dep blobs
 	Addresses []Address
+	Name      string // bundle name (AssetBundle name). Build-tool identity for
+	// incremental merge; runtime does not consume it.
 }

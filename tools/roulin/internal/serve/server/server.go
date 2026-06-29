@@ -40,10 +40,6 @@ func New(rdStorage storage.Storage, writer *Writer, vcsAdapter vcs.VCSAdapter, p
 			mux.HandleFunc("POST /hot/blobs", handlePostBlob(writer.HotReloadStorage))
 		}
 
-		mux.HandleFunc("GET /blobs_meta/{$}", handleListBlobMetaHashes(writer.Storage))
-		mux.HandleFunc("GET /blobs_meta/{prefix}/{hash}", handleGetBlobMeta(writer.Storage))
-		mux.HandleFunc("POST /blobs_meta/{prefix}/{hash}", handlePostBlobMeta(writer.Storage))
-
 		if writer.Broadcaster != nil {
 			mux.HandleFunc("GET /watch/changes", handleWatchChanges(writer.Broadcaster))
 			mux.HandleFunc("POST /patches", handlePostPatches(writer.Broadcaster))

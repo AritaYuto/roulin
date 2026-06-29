@@ -35,8 +35,8 @@ func openFile(_ context.Context, u *url.URL, _ storage.Options) (storage.Storage
 	return NewFile(base), nil
 }
 
-// NewFile roots a FileStorage at baseDir. Subdirectories (blobs/, index/,
-// blobs_meta/) are created lazily on first write.
+// NewFile roots a FileStorage at baseDir. Subdirectories (blobs/, index/) are
+// created lazily on first write.
 func NewFile(baseDir string) *FileStorage {
 	return &FileStorage{baseDir: baseDir}
 }
@@ -86,43 +86,6 @@ func (f *FileStorage) ListIndexRevisions(_ context.Context) ([]storage.ObjectInf
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Revision < out[j].Revision })
-	return out, nil
-}
-
-func (f *FileStorage) PutBlobMeta(_ context.Context, hash string, data []byte) error {
-	return f.write(storage.BlobMetaKey(hash), data)
-}
-
-func (f *FileStorage) GetBlobMeta(_ context.Context, hash string) ([]byte, error) {
-	return f.read(storage.BlobMetaKey(hash))
-}
-
-func (f *FileStorage) ListBlobMetaHashes(_ context.Context) ([]string, error) {
-	root := filepath.Join(f.baseDir, "blobs_meta")
-	prefixDirs, err := os.ReadDir(root)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, err
-	}
-	var out []string
-	for _, pe := range prefixDirs {
-		if !pe.IsDir() {
-			continue
-		}
-		files, err := os.ReadDir(filepath.Join(root, pe.Name()))
-		if err != nil {
-			return nil, err
-		}
-		for _, fe := range files {
-			if fe.IsDir() {
-				continue
-			}
-			out = append(out, fe.Name())
-		}
-	}
-	sort.Strings(out)
 	return out, nil
 }
 

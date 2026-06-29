@@ -5,8 +5,15 @@ import (
 	"fmt"
 )
 
-// BuildIndexFromParcel converts a Parcel to a FlatBuffers Index buffer.
+// BuildIndexFromParcel converts a full Parcel to a FlatBuffers Index buffer.
+// Dep references in DepBundleNames are resolved against the parcel itself
+// (every dep must be a bundle name present in p.Bundles).
 func BuildIndexFromParcel(p *Parcel) ([]byte, error) {
+	nameToHash := make(map[string]string, len(p.Bundles))
+	for _, b := range p.Bundles {
+		nameToHash[b.Address] = b.BlobHash
+	}
+
 	typeIdxByName := make(map[string]uint32)
 	var types []string
 	entries := make([]IndexEntry, 0, len(p.Bundles))
@@ -34,14 +41,40 @@ func BuildIndexFromParcel(p *Parcel) ([]byte, error) {
 				TypeIdxs:   typeIdxs,
 			})
 		}
+		deps, err := resolveDeps(b, nameToHash)
+		if err != nil {
+			return nil, fmt.Errorf("bundle %q: %w", b.Address, err)
+		}
 		entries = append(entries, IndexEntry{
 			BlobHash:  h,
 			SizeBytes: b.SizeBytes,
-			Deps:      b.Dependencies,
+			Deps:      deps,
 			Addresses: addresses,
+			Name:      b.Address,
 		})
 	}
 	return BuildIndexBytes(entries, types), nil
+}
+
+// resolveDeps returns the dep blob-hash list for b, combining any pre-resolved
+// Dependencies with the resolution of DepBundleNames via nameToHash.
+func resolveDeps(b Bundle, nameToHash map[string]string) ([]string, error) {
+	if len(b.DepBundleNames) == 0 {
+		return b.Dependencies, nil
+	}
+	out := make([]string, 0, len(b.Dependencies)+len(b.DepBundleNames))
+	out = append(out, b.Dependencies...)
+	for _, depName := range b.DepBundleNames {
+		if depName == "" {
+			continue
+		}
+		hash, ok := nameToHash[depName]
+		if !ok {
+			return nil, fmt.Errorf("dep bundle name %q not found in parcel + base", depName)
+		}
+		out = append(out, hash)
+	}
+	return out, nil
 }
 
 func parseHashBytes(s string) ([32]byte, error) {

@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-// Storage is the unified read/write interface over the object store (blob, index, blob_meta).
+// Storage is the unified read/write interface over the object store (blob, index).
 // Not-found errors satisfy errors.Is(err, os.ErrNotExist).
 type Storage interface {
 	PutBlob(ctx context.Context, hash string, data []byte) error
@@ -19,10 +19,6 @@ type Storage interface {
 	PutIndex(ctx context.Context, revision string, data []byte) error
 	GetIndex(ctx context.Context, revision string) ([]byte, error)
 	ListIndexRevisions(ctx context.Context) ([]ObjectInfo, error)
-
-	PutBlobMeta(ctx context.Context, hash string, data []byte) error
-	GetBlobMeta(ctx context.Context, hash string) ([]byte, error)
-	ListBlobMetaHashes(ctx context.Context) ([]string, error)
 }
 
 // ObjectInfo carries the metadata `revisions list` consumes.
@@ -32,9 +28,8 @@ type ObjectInfo struct {
 	LastModified time.Time
 }
 
-func BlobKey(hash string) string     { return "blobs/" + hash[:2] + "/" + hash }
-func IndexKey(rev string) string     { return "index/" + rev }
-func BlobMetaKey(hash string) string { return "blobs_meta/" + hash[:2] + "/" + hash }
+func BlobKey(hash string) string { return "blobs/" + hash[:2] + "/" + hash }
+func IndexKey(rev string) string { return "index/" + rev }
 
 // Options carries cloud-backend connection parameters.
 type Options struct {

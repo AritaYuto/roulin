@@ -17,9 +17,6 @@ namespace Roulin.Editor
         private string _bundleOutputDir = "Library/roulin/build";
 
         [SerializeField]
-        private bool _enableBlobMetaCapture;
-
-        [SerializeField]
         private bool _verbose;
 
         public string ServerUrl { get => _serverUrl; set => SetField(ref _serverUrl, value); }
@@ -28,9 +25,6 @@ namespace Roulin.Editor
         public string ManualRevision { get => _manualRevision; set => SetField(ref _manualRevision, value); }
 
         public string BundleOutputDir { get => _bundleOutputDir; set => SetField(ref _bundleOutputDir, value); }
-
-        // Captures dependency data per bundle so warm rebuilds can skip CalculateAssetDependencyData.
-        public bool EnableBlobMetaCapture { get => _enableBlobMetaCapture; set => SetField(ref _enableBlobMetaCapture, value); }
 
         // Per-bundle / per-step detail logs. Aggregate summaries always emit.
         public bool Verbose { get => _verbose; set => SetField(ref _verbose, value); }
@@ -95,17 +89,6 @@ namespace Roulin.Editor
                     if (EditorGUI.EndChangeCheck())
                     {
                         s.BundleOutputDir = od;
-                    }
-
-                    EditorGUI.BeginChangeCheck();
-                    var emc = EditorGUILayout.Toggle(
-                        new GUIContent("Enable blob_meta capture",
-                            "When on, cold builds POST per-blob dependency data to /blobs_meta so warm " +
-                            "rebuilds can skip CalculateAssetDependencyData for unchanged blobs."),
-                        s.EnableBlobMetaCapture);
-                    if (EditorGUI.EndChangeCheck())
-                    {
-                        s.EnableBlobMetaCapture = emc;
                     }
 
                     EditorGUI.BeginChangeCheck();

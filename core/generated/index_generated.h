@@ -160,7 +160,8 @@ struct IndexEntry FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
     VT_BLOB_HASH = 4,
     VT_SIZE_BYTES = 6,
     VT_DEPS = 8,
-    VT_ADDRESSES = 10
+    VT_ADDRESSES = 10,
+    VT_NAME = 12
   };
   const ::flatbuffers::Vector<uint8_t> *blob_hash() const {
     return GetPointer<const ::flatbuffers::Vector<uint8_t> *>(VT_BLOB_HASH);
@@ -174,6 +175,9 @@ struct IndexEntry FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   const ::flatbuffers::Vector<::flatbuffers::Offset<roulin_fbs::Address>> *addresses() const {
     return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<roulin_fbs::Address>> *>(VT_ADDRESSES);
   }
+  const ::flatbuffers::String *name() const {
+    return GetPointer<const ::flatbuffers::String *>(VT_NAME);
+  }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
            VerifyOffset(verifier, VT_BLOB_HASH) &&
@@ -185,6 +189,8 @@ struct IndexEntry FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
            VerifyOffset(verifier, VT_ADDRESSES) &&
            verifier.VerifyVector(addresses()) &&
            verifier.VerifyVectorOfTables(addresses()) &&
+           VerifyOffset(verifier, VT_NAME) &&
+           verifier.VerifyString(name()) &&
            verifier.EndTable();
   }
 };
@@ -205,6 +211,9 @@ struct IndexEntryBuilder {
   void add_addresses(::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<roulin_fbs::Address>>> addresses) {
     fbb_.AddOffset(IndexEntry::VT_ADDRESSES, addresses);
   }
+  void add_name(::flatbuffers::Offset<::flatbuffers::String> name) {
+    fbb_.AddOffset(IndexEntry::VT_NAME, name);
+  }
   explicit IndexEntryBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
@@ -221,9 +230,11 @@ inline ::flatbuffers::Offset<IndexEntry> CreateIndexEntry(
     ::flatbuffers::Offset<::flatbuffers::Vector<uint8_t>> blob_hash = 0,
     uint64_t size_bytes = 0,
     ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<::flatbuffers::String>>> deps = 0,
-    ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<roulin_fbs::Address>>> addresses = 0) {
+    ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<roulin_fbs::Address>>> addresses = 0,
+    ::flatbuffers::Offset<::flatbuffers::String> name = 0) {
   IndexEntryBuilder builder_(_fbb);
   builder_.add_size_bytes(size_bytes);
+  builder_.add_name(name);
   builder_.add_addresses(addresses);
   builder_.add_deps(deps);
   builder_.add_blob_hash(blob_hash);
@@ -235,16 +246,19 @@ inline ::flatbuffers::Offset<IndexEntry> CreateIndexEntryDirect(
     const std::vector<uint8_t> *blob_hash = nullptr,
     uint64_t size_bytes = 0,
     const std::vector<::flatbuffers::Offset<::flatbuffers::String>> *deps = nullptr,
-    const std::vector<::flatbuffers::Offset<roulin_fbs::Address>> *addresses = nullptr) {
+    const std::vector<::flatbuffers::Offset<roulin_fbs::Address>> *addresses = nullptr,
+    const char *name = nullptr) {
   auto blob_hash__ = blob_hash ? _fbb.CreateVector<uint8_t>(*blob_hash) : 0;
   auto deps__ = deps ? _fbb.CreateVector<::flatbuffers::Offset<::flatbuffers::String>>(*deps) : 0;
   auto addresses__ = addresses ? _fbb.CreateVector<::flatbuffers::Offset<roulin_fbs::Address>>(*addresses) : 0;
+  auto name__ = name ? _fbb.CreateString(name) : 0;
   return roulin_fbs::CreateIndexEntry(
       _fbb,
       blob_hash__,
       size_bytes,
       deps__,
-      addresses__);
+      addresses__,
+      name__);
 }
 
 struct Index FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {

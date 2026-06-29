@@ -1,6 +1,5 @@
 using Roulin.Editor;
 using Roulin.Editor.Build.CustomBuildTasks;
-using Roulin.Editor.Build.Meta;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -26,7 +25,6 @@ namespace Roulin.Editor.Build
     {
         public override string Name => "Roulin Parcel Build";
 
-        // Settings live in RoulinEditorSettings; this SO is a stateless invoker.
         public override bool CanBuildData<T>()
         {
             return true;
@@ -52,15 +50,12 @@ namespace Roulin.Editor.Build
             }
             finally
             {
-                // Unhandled exceptions would otherwise leave the progress bar stuck.
                 EditorUtility.ClearProgressBar();
             }
         }
 
         private AddressablesPlayerBuildResult RunBuild(AddressablesDataBuilderInput input)
         {
-            // Outer wall-clock. Subtracting Scriptable Build Pipeline logger's top-level sum yields
-            // the "outside Scriptable Build Pipeline" time (groups walk, warm fetch, uploads, parcel POST).
             var runBuildSw = Stopwatch.StartNew();
             var phaseMs = new List<(string Name, long Ms)>();
 
@@ -77,25 +72,19 @@ namespace Roulin.Editor.Build
             var serverUrl = settings.ServerUrl;
             var bundleOutputDir = settings.BundleOutputDir;
 
-            // Revision priority: CLI arg > settings.ManualRevision > git rev-parse > UTC timestamp.
-            // CLI form (-roulinRevision <value> or =<value>) is the CI entry point; it bypasses
-            // the per-developer settings file so batch builds don't mutate UserSettings/.
             var revision = RoulinUtil.TryCommandLineArg("-roulinRevision");
             if (string.IsNullOrWhiteSpace(revision))
             {
                 revision = settings.ManualRevision;
             }
-
             if (string.IsNullOrWhiteSpace(revision))
             {
                 revision = RoulinUtil.TryGitSha();
             }
-
             if (string.IsNullOrWhiteSpace(revision))
             {
                 revision = RoulinUtil.TimestampRevision();
             }
-
             revision = revision.Trim();
 
             var outputDir = Path.GetFullPath(bundleOutputDir);
@@ -106,90 +95,94 @@ namespace Roulin.Editor.Build
                 $"revision={revision}, output={outputDir}");
 
             using var client = new RoulinServerClient(serverUrl);
-            var meta = new MetaClient(client);
 
             var phaseSw = Stopwatch.StartNew();
             var walk = WalkAddressableGroups.Run(aas);
+            var lookup = BundleLookup.From(walk.BundleBuilds);
             markPhase(phaseSw, "1. groups walk");
 
-            // Warm path. Returns null on any failure; falls through to cold path.
-            // walk.BundleBuilds is NOT filtered: Scriptable Build Pipeline downstream tasks need the full
-            // cross-bundle graph. We rely on the restored dependency data +
-            // BlobExists upload skip for unchanged-blob short-circuit.
+            // Ask the server which revision it considers "base", and which paths
+            // are dirty since that revision. We do NOT fetch the Index here:
+            // catalog merge is server-side, so Unity never reads the previous
+            // Index. If /diff fails or returns an empty revision, fall back
+            // to full publish (every bundle goes to SBP).
             phaseSw = Stopwatch.StartNew();
-            RestorePayload warmRestorePayload = null;
-            if (settings.EnableBlobMetaCapture)
+            string baseRevision = null;
+            List<string> uncommittedUnityPaths = new();
+            try
             {
-                var blobMetas = Task.Run(() => meta.FetchAllBlobMetas()).GetAwaiter().GetResult();
-                if (blobMetas != null)
+                var diff = Task.Run(() => client.GetDiffAsync(sinceSha: null))
+                    .GetAwaiter().GetResult();
+                baseRevision = diff?.revision;
+                var projectRoot = Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
+                var gitRoot = FindGitRoot(projectRoot);
+                uncommittedUnityPaths = VcsDiffPathNormalizer.Normalize(
+                    gitRoot, projectRoot, diff?.uncommitted);
+                Debug.Log(
+                    $"[RoulinBuild] /diff base={baseRevision ?? "(none)"}, " +
+                    $"uncommitted unity paths={uncommittedUnityPaths.Count}");
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning(
+                    $"[RoulinBuild] /diff unavailable ({ex.Message}) → full rebuild");
+            }
+            markPhase(phaseSw, "1.5. vcs diff");
+
+            // Identify bundles to rebuild this revision: those owning a path
+            // in the uncommitted set. Plus the downward closure (every bundle
+            // they transitively depend on) so SBP can resolve cross-bundle
+            // refs without inlining the dep.
+            //
+            // If we have no base revision (or the user armed the force-full
+            // flag for schema migration), fall through to full rebuild =
+            // every walk bundle is considered changed; SBP input = full set;
+            // POST is a full publish.
+            phaseSw = Stopwatch.StartNew();
+            HashSet<string> changedBundles;
+            var forceFull = RoulinForceFullPublish.ConsumeForNextBuild();
+            if (forceFull)
+            {
+                Debug.Log("[RoulinBuild] force-full-publish armed → ignoring base revision");
+            }
+            var incremental = !forceFull && !string.IsNullOrEmpty(baseRevision);
+            if (!incremental)
+            {
+                changedBundles = new HashSet<string>(
+                    walk.BundleBuilds.Select(b => b.assetBundleName), StringComparer.Ordinal);
+                Debug.Log($"[RoulinBuild] full rebuild: {changedBundles.Count} bundles");
+            }
+            else
+            {
+                changedBundles = new HashSet<string>(StringComparer.Ordinal);
+                if (uncommittedUnityPaths != null)
                 {
-                    warmRestorePayload = new RestoreBlobMetas().Decode(blobMetas);
+                    foreach (var name in lookup.ResolveAffectedBundles(uncommittedUnityPaths))
+                    {
+                        changedBundles.Add(name);
+                    }
                 }
             }
 
-            markPhase(phaseSw, "1.5. warm restore fetch");
+            var sbpInputNames = ClosureCompute.Downward(changedBundles, walk.BundleBuilds, lookup);
+            var sbpInputBuilds = walk.BundleBuilds
+                .Where(b => sbpInputNames.Contains(b.assetBundleName))
+                .ToList();
+            Debug.Log(
+                $"[RoulinBuild] SBP input = {sbpInputBuilds.Count}/{walk.BundleBuilds.Count} " +
+                $"(changed={changedBundles.Count}, +closure={sbpInputNames.Count - changedBundles.Count})");
 
-            // VCS-diff staleness signal. Skip when there's no payload to filter.
-            // Failure → conservative fallback (all asset/scene GUIDs marked changed
-            // = no restore = cold-equivalent build).
-            phaseSw = Stopwatch.StartNew();
-            HashSet<GUID> changedGuids = null;
-            if (warmRestorePayload != null)
+            // Cap-to-N detail log so single-file iterations are auditable.
+            const int detailCap = 20;
+            if (changedBundles.Count > 0 && changedBundles.Count <= detailCap)
             {
-                try
-                {
-                    var diff = Task.Run(() => client.GetDiffAsync(sinceSha: null))
-                        .GetAwaiter().GetResult();
-                    var projectRoot = Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
-                    var gitRoot = FindGitRoot(projectRoot);
-                    var unityPaths = VcsDiffPathNormalizer.Normalize(
-                        gitRoot, projectRoot, diff.uncommitted);
-                    var lookup = BundleLookup.From(walk.BundleBuilds);
-                    var changedBundles = lookup.ResolveAffectedBundles(unityPaths);
-                    changedGuids = ExpandBundleSetToAssetGuids(changedBundles, walk.BundleBuilds);
-                    Debug.Log(
-                        $"[RoulinBuild] /diff revision={diff.revision}, " +
-                        $"unity paths in scope={unityPaths.Count}, " +
-                        $"changed bundles={changedBundles.Count}, " +
-                        $"changed asset GUIDs={changedGuids.Count}");
-
-                    // Cap-to-N detail logs let the user verify single-file
-                    // change scenarios (e.g. edit one .png → expect 1 path →
-                    // 1 bundle) without spamming logs on bulk-change builds.
-                    const int detailCap = 20;
-                    if (unityPaths.Count > 0 && unityPaths.Count <= detailCap)
-                    {
-                        foreach (var path in unityPaths)
-                        {
-                            var bundle = lookup.GetBundleFor(path);
-                            Debug.Log(
-                                $"[RoulinBuild]   path: {path} → " +
-                                $"bundle: {bundle ?? "(not in any bundle)"}");
-                        }
-                    }
-                    else if (unityPaths.Count > detailCap)
-                    {
-                        Debug.Log(
-                            $"[RoulinBuild]   (per-path detail omitted: {unityPaths.Count} > {detailCap})");
-                    }
-                    if (changedBundles.Count > 0 && changedBundles.Count <= detailCap)
-                    {
-                        Debug.Log(
-                            $"[RoulinBuild]   changed bundles: " +
-                            $"{string.Join(", ", changedBundles)}");
-                    }
-                }
-                catch (Exception ex)
-                {
-                    changedGuids = AllAssetAndSceneGuids(walk.BundleBuilds);
-                    Debug.LogWarning(
-                        $"[RoulinBuild] /diff query failed → fallback: full rebuild " +
-                        $"({changedGuids.Count} GUIDs marked changed): {ex.Message}");
-                }
+                Debug.Log(
+                    $"[RoulinBuild]   changed bundles: " +
+                    $"{string.Join(", ", changedBundles)}");
             }
-            markPhase(phaseSw, "1.6. vcs diff");
+            markPhase(phaseSw, "1.6. closure compute");
 
-            // Run Scriptable Build Pipeline.
+            // Scriptable Build Pipeline runs over the closure subset only.
             phaseSw = Stopwatch.StartNew();
             var target = EditorUserBuildSettings.activeBuildTarget;
             var targetGroup = BuildPipeline.GetBuildTargetGroup(target);
@@ -215,113 +208,46 @@ namespace Roulin.Editor.Build
                 Debug.Log($"[RoulinBuild] BundleCompression = {firstSchema.Compression}");
             }
 
-            var content = new BundleBuildContent(walk.BundleBuilds);
+            var content = new BundleBuildContent(sbpInputBuilds);
 
             Debug.Log($"[RoulinBuild] running Scriptable Build Pipeline for target={target}, group={targetGroup}…");
 
-            // AssetBundleCompatible omits shader/script extraction → materials
-            // using built-in shaders render pink at runtime. ShaderAndScriptExtraction
-            // adds CreateBuiltInShadersBundle + CreateMonoScriptBundle as auto-wired deps.
+            // Shader/script extraction adds CreateBuiltInShadersBundle +
+            // CreateMonoScriptBundle. Without it materials using built-in
+            // shaders render pink at runtime.
             var buildTasks = DefaultBuildTasks.Create(
                 DefaultBuildTasks.Preset.AssetBundleShaderAndScriptExtraction);
 
-            // Drop-in replacement for Scriptable Build Pipeline CalculateAssetDependencyData: skips the
-            // dirty-check walk (~62% faster). With warmRestorePayload set, it also
-            // pre-populates context for unchanged assets and skips their ContentBuildInterface walk.
-            var assetDepReplacedAt = -1;
-            RoulinCalculateAssetDependencyData assetDepTask = null;
-            for (var i = 0; i < buildTasks.Count; i++)
-            {
-                if (buildTasks[i].GetType().Name == "CalculateAssetDependencyData")
-                {
-                    assetDepTask = new RoulinCalculateAssetDependencyData
-                    {
-                        RestorePayload = warmRestorePayload,
-                        ChangedGuids = changedGuids,
-                    };
-                    buildTasks[i] = assetDepTask;
-                    assetDepReplacedAt = i;
-                    break;
-                }
-            }
-
-            if (assetDepReplacedAt < 0)
-            {
-                Debug.LogWarning(
-                    "[RoulinBuild] default CalculateAssetDependencyData task " +
-                    "not found in Scriptable Build Pipeline preset — passthrough/restore disabled");
-            }
-            else
-            {
-                Debug.Log(
-                    $"[RoulinBuild] CalculateAssetDependencyData replaced at index {assetDepReplacedAt} " +
-                    $"(restore_payload={(warmRestorePayload != null ? "set" : "null")})");
-            }
-
-            var sceneDepReplacedAt = -1;
-            RoulinCalculateSceneDependencyData sceneDepTask = null;
-            for (var i = 0; i < buildTasks.Count; i++)
-            {
-                if (buildTasks[i].GetType().Name == "CalculateSceneDependencyData")
-                {
-                    sceneDepTask = new RoulinCalculateSceneDependencyData
-                    {
-                        RestorePayload = warmRestorePayload,
-                        ChangedGuids = changedGuids,
-                    };
-                    buildTasks[i] = sceneDepTask;
-                    sceneDepReplacedAt = i;
-                    break;
-                }
-            }
-
-            if (sceneDepReplacedAt < 0)
-            {
-                Debug.LogWarning(
-                    "[RoulinBuild] default CalculateSceneDependencyData not found in Scriptable Build Pipeline preset — " +
-                    "scene dependency restore disabled");
-            }
-            else
-            {
-                Debug.Log(
-                    $"[RoulinBuild] CalculateSceneDependencyData replaced at index {sceneDepReplacedAt} " +
-                    $"(restore_payload={(warmRestorePayload != null ? "set" : "null")})");
-            }
-
-            // Shared state injected into Roulin IBuildTasks via [InjectContext].
             var roulinContext = new RoulinBuildSharedContext(
                 walk.BundleBuilds, walk.Inputs, walk.BundleToAssetGroup, walk.AssetEntries, aas, target);
 
             buildTasks.Add(new RoulinGenerateLocationLists());
 
-            // Per-bundle blob_meta capture (opt-in via EnableBlobMetaCapture).
-            buildTasks.Add(new RoulinCaptureBlobMeta
-            {
-                EnableCapture = settings.EnableBlobMetaCapture,
-                UnityVersion = Application.unityVersion,
-                SbpVersion = typeof(IBuildTask).Assembly.GetName().Version.ToString(),
-                AssetDependencyTask = assetDepTask,
-                SceneDependencyTask = sceneDepTask
-            });
-
-            // Publish each bundle binary + its blob_meta sidecar.
             buildTasks.Add(new RoulinPublishBlobs
             {
                 Server = client,
-                Meta = meta,
                 OutputDir = outputDir,
                 Verbose = settings.Verbose
             });
-            
-            // Build the wire Parcel and POST it to /parcels/{rev}.
-            buildTasks.Add(new RoulinPublishParcel
+
+            // Hand the parcel publisher the base revision + the full walk's
+            // bundle name list. Server merges the delta with that base; bundles
+            // in all_bundle_names that the delta did not regenerate are carried
+            // over from base.
+            var publishParcel = new RoulinPublishParcel
             {
                 Server = client,
-                Revision = revision
-            });
+                Revision = revision,
+            };
+            if (incremental)
+            {
+                publishParcel.BaseRevision = baseRevision;
+                publishParcel.AllBundleNames = walk.BundleBuilds
+                    .Select(b => b.assetBundleName)
+                    .ToList();
+            }
+            buildTasks.Add(publishParcel);
 
-            // Surface per-task Scriptable Build Pipeline timing via logger.ScopedStep — needed to
-            // decide which task to optimise next.
             var sbpTimingLogger = new RoulinTimingBuildLogger { EmitPerStepLog = settings.Verbose };
 
             var rc = ContentPipeline.BuildAssetBundles(
@@ -348,15 +274,11 @@ namespace Roulin.Editor.Build
             var reportPath = report.WriteJson(outputDir);
             Debug.Log($"[RoulinBuild] build report → {reportPath}");
 
-            // Final managed-GC sweep so the next build starts clean (native pool
-            // stays reserved; Unity does not return it to the OS).
-            warmRestorePayload = null;
             EditorUtility.UnloadUnusedAssetsImmediate();
             GC.Collect();
             GC.WaitForPendingFinalizers();
             GC.Collect();
 
-            // Unified timing summary: macro phases + Scriptable Build Pipeline per-step aggregates.
             runBuildSw.Stop();
             var runBuildMs = runBuildSw.ElapsedMilliseconds;
             sbpTimingLogger.FlushSummary(runBuildMs, phaseMs);
@@ -381,50 +303,6 @@ namespace Roulin.Editor.Build
                 dir = dir.Parent;
             }
             return startDir;
-        }
-
-        private static HashSet<GUID> ExpandBundleSetToAssetGuids(
-            ISet<string> bundleNames, List<UnityEditor.AssetBundleBuild> bundleBuilds)
-        {
-            var result = new HashSet<GUID>();
-            foreach (var b in bundleBuilds)
-            {
-                if (!bundleNames.Contains(b.assetBundleName) || b.assetNames == null)
-                {
-                    continue;
-                }
-                foreach (var assetPath in b.assetNames)
-                {
-                    var guidStr = AssetDatabase.AssetPathToGUID(assetPath);
-                    if (!string.IsNullOrEmpty(guidStr))
-                    {
-                        result.Add(new GUID(guidStr));
-                    }
-                }
-            }
-            return result;
-        }
-
-        private static HashSet<GUID> AllAssetAndSceneGuids(
-            List<UnityEditor.AssetBundleBuild> bundleBuilds)
-        {
-            var result = new HashSet<GUID>();
-            foreach (var b in bundleBuilds)
-            {
-                if (b.assetNames == null)
-                {
-                    continue;
-                }
-                foreach (var assetPath in b.assetNames)
-                {
-                    var guidStr = AssetDatabase.AssetPathToGUID(assetPath);
-                    if (!string.IsNullOrEmpty(guidStr))
-                    {
-                        result.Add(new GUID(guidStr));
-                    }
-                }
-            }
-            return result;
         }
     }
 }

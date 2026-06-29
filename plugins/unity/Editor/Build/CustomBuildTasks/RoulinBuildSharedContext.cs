@@ -1,4 +1,3 @@
-using Roulin.Editor.Build.Meta;
 using System;
 using System.Collections.Generic;
 using UnityEditor;
@@ -17,7 +16,6 @@ namespace Roulin.Editor.Build.CustomBuildTasks
         List<AddressableAssetEntry> AssetEntries { get; }
         AddressableAssetSettings Aas { get; }
         BuildTarget Target { get; }
-        Dictionary<string, RoulinUnityBlob> BlobMetasByBundle { get; }
     }
 
     public readonly struct RoulinBuildSharedContext : IRoulinBuildSharedContext
@@ -28,7 +26,6 @@ namespace Roulin.Editor.Build.CustomBuildTasks
         public List<AddressableAssetEntry> AssetEntries { get; }
         public AddressableAssetSettings Aas { get; }
         public BuildTarget Target { get; }
-        public Dictionary<string, RoulinUnityBlob> BlobMetasByBundle { get; }
 
         public RoulinBuildSharedContext(
             List<AssetBundleBuild> bundleBuilds,
@@ -44,7 +41,6 @@ namespace Roulin.Editor.Build.CustomBuildTasks
             AssetEntries = assetEntries ?? throw new ArgumentNullException(nameof(assetEntries));
             Aas = aas ?? throw new ArgumentNullException(nameof(aas));
             Target = target;
-            BlobMetasByBundle = new Dictionary<string, RoulinUnityBlob>(StringComparer.Ordinal);
         }
     }
 }
