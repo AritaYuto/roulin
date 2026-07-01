@@ -110,17 +110,20 @@ namespace Roulin.Editor.Build
             // to full publish (every bundle goes to SBP).
             phaseSw = Stopwatch.StartNew();
             string baseRevision = null;
-            IReadOnlyList<string> uncommittedUnityPaths = Array.Empty<string>();
+            IReadOnlyList<string> dirtyUnityPaths = Array.Empty<string>();
+            IReadOnlyList<string> baseBundleNames = Array.Empty<string>();
             try
             {
                 var vcsClient = new VcsDiffClient(client);
                 var diff = Task.Run(() => vcsClient.FetchProjectDiffAsync())
                     .GetAwaiter().GetResult();
                 baseRevision = diff.BaseRevision;
-                uncommittedUnityPaths = diff.UnityPaths;
+                dirtyUnityPaths = diff.UnityPaths;
+                baseBundleNames = diff.BaseBundleNames;
                 Debug.Log(
                     $"[RoulinBuild] /diff base={baseRevision ?? "(none)"}, " +
-                    $"uncommitted unity paths={uncommittedUnityPaths.Count}");
+                    $"dirty unity paths={dirtyUnityPaths.Count}, " +
+                    $"base bundle names={baseBundleNames.Count}");
             }
             catch (Exception ex)
             {
@@ -130,9 +133,9 @@ namespace Roulin.Editor.Build
             markPhase(phaseSw, "1.5. vcs diff");
 
             // Identify bundles to rebuild this revision: those owning a path
-            // in the uncommitted set. Plus the downward closure (every bundle
-            // they transitively depend on) so SBP can resolve cross-bundle
-            // refs without inlining the dep.
+            // in the dirty set (committed base_revision..HEAD + worktree edits).
+            // Plus the downward closure (every bundle they transitively depend on)
+            // so SBP can resolve cross-bundle refs without inlining the dep.
             //
             // If we have no base revision (or the user armed the force-full
             // flag for schema migration), fall through to full rebuild =
@@ -161,20 +164,49 @@ namespace Roulin.Editor.Build
             else
             {
                 changedBundles = new HashSet<string>(StringComparer.Ordinal);
-                if (uncommittedUnityPaths != null)
+                if (dirtyUnityPaths != null)
                 {
-                    var resolved = packRule.ResolveGroupsForPaths(uncommittedUnityPaths);
+                    var resolveSw = Stopwatch.StartNew();
+                    var resolved = packRule.ResolveGroupsForPaths(dirtyUnityPaths);
+                    resolveSw.Stop();
                     foreach (var kv in resolved)
                     {
                         var baseName = AddressablesGroupsView.SanitizeBundleName(kv.Value);
                         var isScene = kv.Key.EndsWith(".unity", StringComparison.Ordinal);
                         changedBundles.Add(isScene ? baseName + "_scenes" : baseName);
                     }
+                    Debug.Log(
+                        $"[RoulinBuild] initial resolve: dirtyPaths={dirtyUnityPaths.Count} " +
+                        $"→ resolved={resolved.Count} paths → changedBundles={changedBundles.Count} " +
+                        $"({resolveSw.ElapsedMilliseconds}ms)");
+                }
+
+                // Force-mark bundles that exist in the current Addressables walk
+                // but not in base's Index. These are "new since base" — SBP
+                // must build them this time, otherwise the server-side merge
+                // rejects the parcel with "listed in all_bundle_names is
+                // neither in delta nor in base revision".
+                var baseNamesSet = new HashSet<string>(baseBundleNames, StringComparer.Ordinal);
+                var newBundleCount = 0;
+                foreach (var b in view.BundleBuilds)
+                {
+                    if (!baseNamesSet.Contains(b.assetBundleName)
+                        && changedBundles.Add(b.assetBundleName))
+                    {
+                        newBundleCount++;
+                    }
+                }
+                if (newBundleCount > 0)
+                {
+                    Debug.Log(
+                        $"[RoulinBuild] new bundles (in view, not in base): {newBundleCount}");
                 }
             }
+            markPhase(phaseSw, "1.6a. initial changed resolve");
 
             // Full rebuild already covers every bundle, so no dep closure is
             // needed (and packRule may be null in that path).
+            phaseSw = Stopwatch.StartNew();
             var sbpInputNames = incremental
                 ? BundleDependencyResolver.Resolve(changedBundles, view.BundleBuilds, packRule)
                 : new HashSet<string>(changedBundles, StringComparer.Ordinal);
@@ -193,7 +225,7 @@ namespace Roulin.Editor.Build
                     $"[RoulinBuild]   changed bundles: " +
                     $"{string.Join(", ", changedBundles)}");
             }
-            markPhase(phaseSw, "1.6. closure compute");
+            markPhase(phaseSw, "1.6b. dep closure walk");
 
             // Scriptable Build Pipeline runs over the closure subset only.
             phaseSw = Stopwatch.StartNew();

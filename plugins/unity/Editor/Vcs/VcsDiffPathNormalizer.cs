@@ -3,10 +3,8 @@ using System.Collections.Generic;
 
 namespace Roulin.Editor.Vcs
 {
-    // Path munging that turns raw repo-relative diff entries into
-    // Unity-project-relative paths, filtered to Assets/ or Packages/.
-    // Consumers should go through VcsDiffClient; this class is kept public
-    // for the sake of the pure-function unit tests.
+    // Kept public only for pure-function unit tests; production callers go
+    // through VcsDiffClient.
     public static class VcsDiffPathNormalizer
     {
         public static List<string> Normalize(

@@ -101,15 +101,14 @@ namespace Roulin.Editor
             }
         }
 
-        // Fetches the VCS diff used by the incremental build path. `sinceSha`
-        // is the revision recorded in the last published catalog; pass null or
-        // empty to skip the committed diff (caller falls back to full rebuild).
-        // Returns null on transport-level failure so callers can degrade
-        // gracefully rather than aborting the build.
-        public async Task<DiffResponse> GetDiffAsync(string sinceSha, CancellationToken ct = default)
+        // Fetches the incremental build inputs. The server picks the base
+        // revision from its own stored Index list (newest by LastModified) —
+        // guaranteeing whatever we get back has an Index the merge step can
+        // load. Empty base_revision = "no prior publish", caller falls back
+        // to a full rebuild.
+        public async Task<DiffResponse> GetDiffAsync(CancellationToken ct = default)
         {
-            var query = string.IsNullOrEmpty(sinceSha) ? "" : "?since=" + Uri.EscapeDataString(sinceSha);
-            var url = $"{_baseUrl}/diff{query}";
+            var url = $"{_baseUrl}/diff";
             var (status, body) = await SendWithRetry(
                 () => new HttpRequestMessage(HttpMethod.Get, url), ct);
             if ((int)status >= 400)
@@ -203,9 +202,15 @@ namespace Roulin.Editor
         [Serializable]
         public sealed class DiffResponse
         {
-            public string revision;
+            public string base_revision;
+            public string head_revision;
             public List<string> changed;
             public List<string> uncommitted;
+            // Bundle names present in the base revision's Index. Used by the
+            // build to detect NEW bundles (present in HEAD's Addressables walk
+            // but missing at base) that would otherwise slip past the
+            // path-based dirty detection.
+            public List<string> base_bundle_names;
         }
     }
 }

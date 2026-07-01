@@ -7,16 +7,8 @@ using UnityEngine;
 
 namespace Roulin.Editor.Vcs
 {
-    // Domain-facing wrapper around Roulin server's /diff endpoint. Callers pass
-    // a since-SHA (or null for "server-recorded base") and get back a base
-    // revision + the Unity-project-relative paths of dirty files.
-    //
-    // Encapsulates three concerns the build script used to do itself:
-    //   1. HTTP call via RoulinServerClient.GetDiffAsync (raw response)
-    //   2. Discovering the git-root ancestor of the Unity project so raw
-    //      repo-relative paths can be trimmed to project-relative
-    //   3. Filtering to Unity paths only (Assets/ or Packages/), silently
-    //      dropping everything else
+    // Fetches the server's /diff, then trims and filters the returned paths so
+    // callers see only Unity-project-relative Assets/ or Packages/ entries.
     public sealed class VcsDiffClient
     {
         private readonly RoulinServerClient _server;
@@ -26,21 +18,27 @@ namespace Roulin.Editor.Vcs
             _server = server ?? throw new ArgumentNullException(nameof(server));
         }
 
-        public async Task<VcsDiffResult> FetchProjectDiffAsync(
-            string sinceSha = null,
-            CancellationToken ct = default)
+        public async Task<VcsDiffResult> FetchProjectDiffAsync(CancellationToken ct = default)
         {
-            var raw = await _server.GetDiffAsync(sinceSha, ct);
+            var raw = await _server.GetDiffAsync(ct);
             var projectRoot = Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
             var gitRoot = FindGitRoot(projectRoot);
+            // committed (base_revision..HEAD) and uncommitted worktree edits
+            // are both "dirty" from the incremental build's viewpoint —
+            // merge before normalisation so downstream sees one list.
+            var repoPaths = new List<string>();
+            if (raw?.changed != null) repoPaths.AddRange(raw.changed);
+            if (raw?.uncommitted != null) repoPaths.AddRange(raw.uncommitted);
             var unityPaths = VcsDiffPathNormalizer.Normalize(
-                gitRoot, projectRoot, raw?.uncommitted);
-            return new VcsDiffResult(raw?.revision, unityPaths);
+                gitRoot, projectRoot, repoPaths);
+            return new VcsDiffResult(
+                raw?.base_revision,
+                unityPaths,
+                raw?.base_bundle_names);
         }
 
-        // Walk parent directories from the Unity project root until a .git
-        // marker turns up. Falls back to the start directory when nothing is
-        // found — the normaliser handles that case as "no prefix stripping".
+        // Fallback (no .git found) returns startDir; the normaliser treats
+        // that as "no prefix stripping".
         internal static string FindGitRoot(string startDir)
         {
             var dir = new DirectoryInfo(startDir);
@@ -61,11 +59,18 @@ namespace Roulin.Editor.Vcs
     {
         public string BaseRevision { get; }
         public IReadOnlyList<string> UnityPaths { get; }
+        // Bundle names present in the base revision's Index. Empty when there
+        // is no base yet; caller falls back to full rebuild anyway.
+        public IReadOnlyList<string> BaseBundleNames { get; }
 
-        public VcsDiffResult(string baseRevision, IReadOnlyList<string> unityPaths)
+        public VcsDiffResult(
+            string baseRevision,
+            IReadOnlyList<string> unityPaths,
+            IReadOnlyList<string> baseBundleNames)
         {
             BaseRevision = baseRevision;
             UnityPaths = unityPaths ?? Array.Empty<string>();
+            BaseBundleNames = baseBundleNames ?? Array.Empty<string>();
         }
     }
 }

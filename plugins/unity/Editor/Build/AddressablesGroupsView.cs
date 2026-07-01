@@ -9,15 +9,9 @@ using Debug = UnityEngine.Debug;
 
 namespace Roulin.Editor.Build
 {
-    // Immutable snapshot of AddressableAssetSettings as SBP-shaped bundle
-    // input plus per-bundle addressable entries for the catalog builder.
-    // Injected into the SBP task chain as an IContextObject; RoulinPublishParcel
-    // pulls from this when constructing the catalog.
-    //
-    // Scope kept intentionally narrow: this class only mirrors AAS into the
-    // shape SBP + the catalog want. "Which group would rule X land in for a
-    // transitive path" is handled by IRoulinPackRule. This view reads AAS,
-    // nothing else.
+    // Immutable snapshot of AddressableAssetSettings: SBP-shaped bundle
+    // input + per-bundle addressable entries for the catalog. Injected as an
+    // IContextObject and consumed by RoulinPublishParcel.
     public sealed class AddressablesGroupsView : IContextObject
     {
         private readonly List<AssetBundleBuild> mBundleBuilds = new();
@@ -74,11 +68,8 @@ namespace Roulin.Editor.Build
                 List<string> scenePaths = null, sceneAddrs = null;
                 List<AddressableEntry> sceneEntries = null;
 
-                // Flatten group entries so folder entries (e.g. an asset
-                // folder dragged whole into a group) expand to their leaf
-                // assets. Without this, VCS changes to files inside a folder
-                // entry never resolve back to a bundle and the incremental
-                // filter misses them.
+                // Folder entries must be expanded to their leaf assets so VCS
+                // changes to files inside them resolve back to a bundle.
                 var leaves = new List<AddressableAssetEntry>();
                 foreach (var entry in g.entries)
                 {
@@ -188,9 +179,8 @@ namespace Roulin.Editor.Build
         }
 
         // SBP bundle names round-trip through file paths; anything outside
-        // [a-z0-9_-] (including '/') becomes '_'.
-        // Shared with IRoulinPackRule consumers that need to convert a group
-        // name back to the same bundle name Walk produced.
+        // [a-z0-9_-] becomes '_'. Shared with IRoulinPackRule consumers to
+        // ensure their resolved group names collapse to the same bundle name.
         internal static string SanitizeBundleName(string name)
         {
             var sb = new StringBuilder(name.Length);

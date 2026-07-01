@@ -99,7 +99,8 @@ func init() {
 
 	serveCmd.Flags().IntVar(&flagPort, "port", e.Port, "Listen port")
 	serveCmd.Flags().StringVar(&flagVCSProjectRoot, "vcs-project-root", e.VCSProjectRoot,
-		"Engine project's git working tree. Exposes GET /diff?since=<sha>. Empty disables /diff.")
+		"Engine project's git working tree. Exposes GET /diff (server picks the base "+
+			"from its own stored Index list). Empty disables /diff.")
 	serveCmd.Flags().StringVar(&flagVCSPathspecs, "vcs-pathspecs", e.VCSPathspecs,
 		"Comma-separated pathspecs scoping /diff (e.g. client/p/Assets,client/p/Packages). Empty queries the entire repo.")
 
