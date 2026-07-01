@@ -1,5 +1,7 @@
 using Roulin.Editor;
 using Roulin.Editor.Build.CustomBuildTasks;
+using Roulin.Editor.PackRule;
+using Roulin.Editor.Vcs;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -98,6 +100,7 @@ namespace Roulin.Editor.Build
 
             var phaseSw = Stopwatch.StartNew();
             var view = AddressablesGroupsView.From(aas);
+            var packRule = RoulinPackRuleRegistry.Resolve(aas);
             markPhase(phaseSw, "1. groups walk");
 
             // Ask the server which revision it considers "base", and which paths
@@ -107,16 +110,14 @@ namespace Roulin.Editor.Build
             // to full publish (every bundle goes to SBP).
             phaseSw = Stopwatch.StartNew();
             string baseRevision = null;
-            List<string> uncommittedUnityPaths = new();
+            IReadOnlyList<string> uncommittedUnityPaths = Array.Empty<string>();
             try
             {
-                var diff = Task.Run(() => client.GetDiffAsync(sinceSha: null))
+                var vcsClient = new VcsDiffClient(client);
+                var diff = Task.Run(() => vcsClient.FetchProjectDiffAsync())
                     .GetAwaiter().GetResult();
-                baseRevision = diff?.revision;
-                var projectRoot = Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
-                var gitRoot = FindGitRoot(projectRoot);
-                uncommittedUnityPaths = VcsDiffPathNormalizer.Normalize(
-                    gitRoot, projectRoot, diff?.uncommitted);
+                baseRevision = diff.BaseRevision;
+                uncommittedUnityPaths = diff.UnityPaths;
                 Debug.Log(
                     $"[RoulinBuild] /diff base={baseRevision ?? "(none)"}, " +
                     $"uncommitted unity paths={uncommittedUnityPaths.Count}");
@@ -144,7 +145,13 @@ namespace Roulin.Editor.Build
             {
                 Debug.Log("[RoulinBuild] force-full-publish armed → ignoring base revision");
             }
-            var incremental = !forceFull && !string.IsNullOrEmpty(baseRevision);
+            if (packRule == null && !forceFull && !string.IsNullOrEmpty(baseRevision))
+            {
+                Debug.LogWarning(
+                    "[RoulinBuild] no IRoulinPackRule registered → falling back to full rebuild. " +
+                    "Register a project-specific IRoulinPackRule via RoulinPackRuleRegistry to enable incremental builds.");
+            }
+            var incremental = !forceFull && !string.IsNullOrEmpty(baseRevision) && packRule != null;
             if (!incremental)
             {
                 changedBundles = new HashSet<string>(
@@ -156,14 +163,21 @@ namespace Roulin.Editor.Build
                 changedBundles = new HashSet<string>(StringComparer.Ordinal);
                 if (uncommittedUnityPaths != null)
                 {
-                    foreach (var name in view.ResolveAffectedBundles(uncommittedUnityPaths))
+                    var resolved = packRule.ResolveGroupsForPaths(uncommittedUnityPaths);
+                    foreach (var kv in resolved)
                     {
-                        changedBundles.Add(name);
+                        var baseName = AddressablesGroupsView.SanitizeBundleName(kv.Value);
+                        var isScene = kv.Key.EndsWith(".unity", StringComparison.Ordinal);
+                        changedBundles.Add(isScene ? baseName + "_scenes" : baseName);
                     }
                 }
             }
 
-            var sbpInputNames = BundleDependencyResolver.Resolve(changedBundles, view);
+            // Full rebuild already covers every bundle, so no dep closure is
+            // needed (and packRule may be null in that path).
+            var sbpInputNames = incremental
+                ? BundleDependencyResolver.Resolve(changedBundles, view.BundleBuilds, packRule)
+                : new HashSet<string>(changedBundles, StringComparer.Ordinal);
             var sbpInputBuilds = view.BundleBuilds
                 .Where(b => sbpInputNames.Contains(b.assetBundleName))
                 .ToList();
@@ -228,10 +242,9 @@ namespace Roulin.Editor.Build
                 Verbose = settings.Verbose
             });
 
-            // Hand the parcel publisher the base revision + the full walk's
-            // bundle name list. Server merges the delta with that base; bundles
-            // in all_bundle_names that the delta did not regenerate are carried
-            // over from base.
+            // Hand the parcel publisher the base revision. The publisher itself
+            // computes all_bundle_names at run time from view + SBP-synthesised
+            // results (so built-in bundles aren't dropped by the server merge).
             var publishParcel = new RoulinPublishParcel
             {
                 Server = client,
@@ -240,9 +253,6 @@ namespace Roulin.Editor.Build
             if (incremental)
             {
                 publishParcel.BaseRevision = baseRevision;
-                publishParcel.AllBundleNames = view.BundleBuilds
-                    .Select(b => b.assetBundleName)
-                    .ToList();
             }
             buildTasks.Add(publishParcel);
 
@@ -280,19 +290,5 @@ namespace Roulin.Editor.Build
             };
         }
 
-        private static string FindGitRoot(string startDir)
-        {
-            var dir = new System.IO.DirectoryInfo(startDir);
-            while (dir != null)
-            {
-                var marker = Path.Combine(dir.FullName, ".git");
-                if (System.IO.Directory.Exists(marker) || System.IO.File.Exists(marker))
-                {
-                    return dir.FullName;
-                }
-                dir = dir.Parent;
-            }
-            return startDir;
-        }
     }
 }

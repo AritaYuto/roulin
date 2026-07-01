@@ -9,96 +9,30 @@ using Debug = UnityEngine.Debug;
 
 namespace Roulin.Editor.Build
 {
-    // SBP-injectable contract for the immutable Addressables-side view.
-    // RoulinPublishParcel pulls from this when constructing the catalog.
-    public interface IAddressablesGroupsView : IContextObject
-    {
-        IReadOnlyList<AssetBundleBuild> BundleBuilds { get; }
-        string GetBundle(string assetPath);
-        ISet<string> ResolveAffectedBundles(IEnumerable<string> changedPaths);
-        IReadOnlyList<AddressableEntry> GetEntries(string bundleName);
-    }
-
-    // Immutable snapshot of AddressableAssetSettings as seen at build time.
+    // Immutable snapshot of AddressableAssetSettings as SBP-shaped bundle
+    // input plus per-bundle addressable entries for the catalog builder.
+    // Injected into the SBP task chain as an IContextObject; RoulinPublishParcel
+    // pulls from this when constructing the catalog.
     //
-    //   - BundleBuilds[]:        AssetBundleBuild list for SBP input
-    //   - GetEntries(name):      per-bundle addressable entries
-    //                            (consumed by catalog builder to fill
-    //                            Parcel.Bundle.entries)
-    //   - GetBundle(path) /
-    //     ResolveAffectedBundles:reverse index from asset path → owning
-    //                            bundle, used by VCS-diff and the bundle
-    //                            dependency resolver
-    //                            for incremental build identification
-    //
-    // No mutable build state lives here — RoulinPublishBlobs / RoulinPublish-
-    // Parcel publish their own results via separate context objects.
-    //
-    // Invariant: every asset path appears in at most one bundle (Addressables
-    // enforces single-group membership). Violation throws at snapshot-build
-    // time.
-    public sealed class AddressablesGroupsView : IAddressablesGroupsView
+    // Scope kept intentionally narrow: this class only mirrors AAS into the
+    // shape SBP + the catalog want. "Which group would rule X land in for a
+    // transitive path" is handled by IRoulinPackRule. This view reads AAS,
+    // nothing else.
+    public sealed class AddressablesGroupsView : IContextObject
     {
         private readonly List<AssetBundleBuild> mBundleBuilds = new();
-        private readonly Dictionary<string, string> mAssetPathToBundle =
-            new(StringComparer.Ordinal);
         private readonly Dictionary<string, List<AddressableEntry>> mEntriesByBundle =
             new(StringComparer.Ordinal);
 
         public IReadOnlyList<AssetBundleBuild> BundleBuilds => mBundleBuilds;
-        public int SkippedGroups { get; private set; }
 
         private AddressablesGroupsView() { }
 
-        // Full-fidelity factory: walks AddressableAssetSettings → BundleBuilds,
-        // per-bundle entries, and the reverse lookup.
         public static AddressablesGroupsView From(AddressableAssetSettings aas)
         {
             var v = new AddressablesGroupsView();
             v.Walk(aas);
             return v;
-        }
-
-        // Test factory: builds the reverse lookup + BundleBuilds list from a
-        // hand-rolled AssetBundleBuild[] without any AddressableAssetSettings.
-        // Per-bundle entries are left empty. Use only from tests that exercise
-        // the lookup methods in isolation.
-        public static AddressablesGroupsView FromBundleBuilds(IEnumerable<AssetBundleBuild> builds)
-        {
-            if (builds == null) throw new ArgumentNullException(nameof(builds));
-            var v = new AddressablesGroupsView();
-            foreach (var b in builds)
-            {
-                v.mBundleBuilds.Add(b);
-                v.RegisterAssetPaths(b);
-            }
-            return v;
-        }
-
-        // Returns the bundle name owning assetPath, or null when no bundle owns
-        // it. Null is the expected signal for "this file does not trigger a
-        // rebuild because no bundle owns it".
-        public string GetBundle(string assetPath)
-        {
-            if (string.IsNullOrEmpty(assetPath)) return null;
-            return mAssetPathToBundle.TryGetValue(assetPath, out var bundle)
-                ? bundle
-                : null;
-        }
-
-        // Resolves a list of changed file paths to the set of bundles that
-        // need to be rebuilt. Paths with no owning bundle are silently
-        // skipped.
-        public ISet<string> ResolveAffectedBundles(IEnumerable<string> changedPaths)
-        {
-            var bundles = new HashSet<string>(StringComparer.Ordinal);
-            if (changedPaths == null) return bundles;
-            foreach (var path in changedPaths)
-            {
-                var bundle = GetBundle(path);
-                if (bundle != null) bundles.Add(bundle);
-            }
-            return bundles;
         }
 
         // Returns the addressable entries for this bundle, or an empty list
@@ -111,22 +45,20 @@ namespace Roulin.Editor.Build
                 : Array.Empty<AddressableEntry>();
         }
 
-        // Number of (asset path → bundle) entries in the reverse lookup.
-        public int LookupCount => mAssetPathToBundle.Count;
-
         private void Walk(AddressableAssetSettings aas)
         {
+            var skippedGroups = 0;
             foreach (var g in aas.groups)
             {
                 if (g == null || g.ReadOnly)
                 {
-                    SkippedGroups++;
+                    skippedGroups++;
                     continue;
                 }
 
                 if (!g.HasSchema<BundledAssetGroupSchema>())
                 {
-                    SkippedGroups++;
+                    skippedGroups++;
                     continue;
                 }
 
@@ -142,10 +74,29 @@ namespace Roulin.Editor.Build
                 List<string> scenePaths = null, sceneAddrs = null;
                 List<AddressableEntry> sceneEntries = null;
 
+                // Flatten group entries so folder entries (e.g. an asset
+                // folder dragged whole into a group) expand to their leaf
+                // assets. Without this, VCS changes to files inside a folder
+                // entry never resolve back to a bundle and the incremental
+                // filter misses them.
+                var leaves = new List<AddressableAssetEntry>();
                 foreach (var entry in g.entries)
                 {
                     if (entry == null) continue;
-                    if (entry.IsFolder) continue; // expand-by-folder is a v2 concern
+                    if (entry.IsFolder)
+                    {
+                        entry.GatherAllAssets(leaves, false, true, false);
+                    }
+                    else
+                    {
+                        leaves.Add(entry);
+                    }
+                }
+
+                foreach (var entry in leaves)
+                {
+                    if (entry == null) continue;
+                    if (entry.IsFolder) continue;
                     if (string.IsNullOrEmpty(entry.AssetPath)) continue;
 
                     var resType = AssetDatabase.GetMainAssetTypeAtPath(entry.AssetPath);
@@ -184,7 +135,7 @@ namespace Roulin.Editor.Build
 
                 if (assetEntries == null && sceneEntries == null)
                 {
-                    SkippedGroups++;
+                    skippedGroups++;
                     continue;
                 }
 
@@ -206,7 +157,7 @@ namespace Roulin.Editor.Build
 
             Debug.Log(
                 $"[RoulinBuild] groups resolved: {mBundleBuilds.Count} bundle(s), " +
-                $"{SkippedGroups} group(s) skipped");
+                $"{skippedGroups} group(s) skipped");
         }
 
         private void EmitBundle(
@@ -229,7 +180,6 @@ namespace Roulin.Editor.Build
                 addressableNames = addressableNames.ToArray()
             };
             mBundleBuilds.Add(build);
-            RegisterAssetPaths(build);
             mEntriesByBundle[bundleName] = entries;
 
             Debug.Log(
@@ -237,32 +187,11 @@ namespace Roulin.Editor.Build
                 $"({entries.Count} entries)");
         }
 
-        // Folds an AssetBundleBuild's assetNames[] into the reverse map.
-        // Same-bundle re-registration of the same path is a no-op; the same
-        // path appearing under two bundles throws.
-        private void RegisterAssetPaths(AssetBundleBuild b)
-        {
-            if (b.assetNames == null) return;
-            foreach (var path in b.assetNames)
-            {
-                if (string.IsNullOrEmpty(path)) continue;
-                if (mAssetPathToBundle.TryGetValue(path, out var existing))
-                {
-                    if (existing != b.assetBundleName)
-                    {
-                        throw new InvalidOperationException(
-                            $"asset '{path}' appears in two bundles: " +
-                            $"'{existing}' and '{b.assetBundleName}'");
-                    }
-                    continue;
-                }
-                mAssetPathToBundle[path] = b.assetBundleName;
-            }
-        }
-
         // SBP bundle names round-trip through file paths; anything outside
         // [a-z0-9_-] (including '/') becomes '_'.
-        private static string SanitizeBundleName(string name)
+        // Shared with IRoulinPackRule consumers that need to convert a group
+        // name back to the same bundle name Walk produced.
+        internal static string SanitizeBundleName(string name)
         {
             var sb = new StringBuilder(name.Length);
             foreach (var c in name.ToLowerInvariant())

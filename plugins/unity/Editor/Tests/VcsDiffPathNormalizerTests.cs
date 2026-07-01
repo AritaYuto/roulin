@@ -1,6 +1,6 @@
 using System.Collections.Generic;
 using NUnit.Framework;
-using Roulin.Editor.Build;
+using Roulin.Editor.Vcs;
 
 namespace Roulin.Editor.Tests
 {

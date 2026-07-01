@@ -63,7 +63,7 @@ namespace Roulin
             if (string.IsNullOrEmpty(key)) return UniTask.FromResult(0);
 
             int removed = 0;
-            foreach (var hashHex in GetBundleHashesFor(key))
+            foreach (var hashHex in GetBundleHashes(key))
             {
                 if (string.IsNullOrEmpty(hashHex) || hashHex.Length < 2) continue;
                 string path = Path.Combine(_blobsDir, hashHex.Substring(0, 2), hashHex);
@@ -101,9 +101,7 @@ namespace Roulin
             return UniTask.FromResult(removed);
         }
 
-
-
-        IEnumerable<string> GetBundleHashesFor(string key)
+        IEnumerable<string> GetBundleHashes(string key)
         {
             if (Locator == null) return Array.Empty<string>();
             if (!Locator.Locate(key, typeof(UnityEngine.Object), out var locations))

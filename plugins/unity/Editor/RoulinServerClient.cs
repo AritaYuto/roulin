@@ -6,9 +6,10 @@ using System.Net.Http.Headers;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using Roulin.Editor.Build;
 using UnityEngine;
 
-namespace Roulin.Editor.Build
+namespace Roulin.Editor
 {
     public sealed class RoulinServerClient : IDisposable
     {

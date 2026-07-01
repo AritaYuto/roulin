@@ -25,7 +25,7 @@ namespace Roulin.Editor.Build.CustomBuildTasks
         private IBundleWriteData _writeData;
 
         [InjectContext(ContextUsage.In)]
-        private IAddressablesGroupsView _view;
+        private AddressablesGroupsView _view;
 
         [InjectContext(ContextUsage.In)]
         private IBlobUploadResults _uploadResults;
@@ -47,11 +47,6 @@ namespace Roulin.Editor.Build.CustomBuildTasks
         // to publish incrementally. Leave null/empty for a full publish.
         public string BaseRevision { get; set; }
 
-        // Full list of bundle names that should exist in the new revision.
-        // Required when BaseRevision is set. The server keeps base entries
-        // whose names are in this list and drops the rest.
-        public List<string> AllBundleNames { get; set; }
-
         public ReturnCode Run()
         {
             if (Server == null)
@@ -66,18 +61,27 @@ namespace Roulin.Editor.Build.CustomBuildTasks
             }
 
             var incremental = !string.IsNullOrEmpty(BaseRevision);
-            if (incremental && (AllBundleNames == null || AllBundleNames.Count == 0))
-            {
-                throw new InvalidOperationException(
-                    "RoulinPublishParcel.AllBundleNames is required when BaseRevision is set");
-            }
 
             PopulateCatalog(_catalog);
             var parcel = _catalog.ToParcel();
             if (incremental)
             {
                 parcel.base_revision = BaseRevision;
-                parcel.all_bundle_names = AllBundleNames;
+                // The set of bundle names that should exist in the new revision:
+                // every bundle the Addressables walk produced + every bundle SBP
+                // synthesised (UnityBuiltInShaders.bundle / UnityMonoScripts.bundle).
+                // Server drops base entries not in this set, so omitting the
+                // synthesised ones would lose them across revisions.
+                var allNames = new HashSet<string>(StringComparer.Ordinal);
+                foreach (var b in _view.BundleBuilds)
+                {
+                    allNames.Add(b.assetBundleName);
+                }
+                foreach (var kv in _sbpResults.BundleInfos)
+                {
+                    allNames.Add(kv.Key);
+                }
+                parcel.all_bundle_names = new List<string>(allNames);
             }
 
             EditorUtility.DisplayProgressBar(
