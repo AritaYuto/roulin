@@ -73,11 +73,6 @@ func MergeParcel(p *Parcel, basisBytes []byte) ([]byte, error) {
 		}
 	}
 
-	keepName := make(map[string]struct{}, len(p.AllBundleNames))
-	for _, n := range p.AllBundleNames {
-		keepName[n] = struct{}{}
-	}
-
 	typeIdxByName := make(map[string]uint32, len(prevTypes))
 	mergedTypes := append([]string{}, prevTypes...)
 	for i, t := range mergedTypes {
@@ -127,7 +122,6 @@ func MergeParcel(p *Parcel, basisBytes []byte) ([]byte, error) {
 			name)
 	}
 
-	_ = keepName
 	return BuildIndexBytes(merged, mergedTypes), nil
 }
 
