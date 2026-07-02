@@ -10,26 +10,6 @@ import (
 	"github.com/KirisameMarisa/roulin/tools/roulin/internal/storage"
 )
 
-// DiffResponse is the payload Unity consumes to decide the incremental build
-// base and the set of dirty paths.
-//
-// BaseRevision is the newest revision the server holds an Index for — Unity
-// sends it back as parcel.base_revision so the server-side merge is applied
-// against a known-existing catalog. Empty means "no prior publish exists";
-// Unity falls back to full publish.
-//
-// HeadRevision is the engine repo's current HEAD, reported so the caller can
-// cross-check against the parcel revision it will POST. Not used by the merge.
-//
-// Changed is the committed diff BaseRevision..HeadRevision. Nil when there is
-// no base yet, or when base already equals HEAD (only worktree edits).
-//
-// BaseBundleNames is the flat list of bundle names present in the base
-// revision's Index. Unity uses it to detect bundles that exist in HEAD's
-// Addressables walk but did NOT exist at base — those must be forced into
-// the "changed" set, otherwise SBP skips them and the server-side merge sees
-// a name listed in all_bundle_names that is neither in the delta nor in base.
-// Nil when there is no base yet.
 type DiffResponse struct {
 	BaseRevision    string   `json:"base_revision"`
 	HeadRevision    string   `json:"head_revision"`
@@ -86,10 +66,6 @@ func handleDiff(s storage.Storage, adapter vcs.VCSAdapter) http.HandlerFunc {
 	}
 }
 
-// loadIndexBundleNames returns the flat list of bundle names present in the
-// given revision's stored Index. Unity uses this to detect NEW bundles that
-// appear in HEAD's Addressables walk but not in base — SBP would otherwise
-// silently skip them and the merge server would reject the parcel.
 func loadIndexBundleNames(ctx context.Context, s storage.Storage, rev string) ([]string, error) {
 	buf, err := s.GetIndex(ctx, rev)
 	if err != nil {
@@ -97,17 +73,16 @@ func loadIndexBundleNames(ctx context.Context, s storage.Storage, rev string) ([
 	}
 	entries, _ := build.ParseIndexBytes(buf)
 	names := make([]string, 0, len(entries))
-	for _, e := range entries {
-		if e.Name != "" {
-			names = append(names, e.Name)
+	for _, entry := range entries {
+		if entry.Name != "" {
+			names = append(names, entry.Name)
 		}
 	}
 	return names, nil
 }
 
-// latestStoredRevision returns the most recently written Index revision by
-// LastModified, or "" when none exist. ListIndexRevisions makes no ordering
-// guarantee (file backend sorts by name, S3 by lex key), so we sort here.
+// Backends don't guarantee list order (file = name, S3 = lex key), so sort by
+// LastModified here.
 func latestStoredRevision(ctx context.Context, s storage.Storage) (string, error) {
 	infos, err := s.ListIndexRevisions(ctx)
 	if err != nil {
