@@ -3,9 +3,6 @@ using UnityEditor.AddressableAssets.Settings;
 
 namespace Roulin.Editor.PackRule
 {
-    // Registration point for the project's IRoulinPackRule (register from an
-    // [InitializeOnLoad] hook). No default: Resolve returns null when nothing
-    // is registered, and the build script degrades to full rebuild.
     public static class RoulinPackRuleRegistry
     {
         private static Func<AddressableAssetSettings, IRoulinPackRule> s_factory;

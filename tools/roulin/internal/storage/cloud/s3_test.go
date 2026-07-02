@@ -3,7 +3,7 @@
 //
 // Gated by ROULIN_INTEGRATION=1 so a plain `go test ./...` skips it.
 
-package roulin_test
+package cloud
 
 import (
 	"bytes"
@@ -27,18 +27,18 @@ func requireIntegration(t *testing.T) {
 	}
 }
 
-func firstNonEmpty(s ...string) string {
-	for _, v := range s {
-		if v != "" {
-			return v
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
 		}
 	}
 	return ""
 }
 
 func s3Endpoint() string {
-	if ep := os.Getenv("ROULIN_TEST_S3_ENDPOINT"); ep != "" {
-		return ep
+	if endpoint := os.Getenv("ROULIN_TEST_S3_ENDPOINT"); endpoint != "" {
+		return endpoint
 	}
 	return "http://localhost:9000"
 }
@@ -57,17 +57,16 @@ func setupS3Storage(ctx context.Context, t *testing.T) storage.Storage {
 	_, _ = rand.Read(prefixBuf)
 	url := "s3://roulin-dev/integration_" + hex.EncodeToString(prefixBuf)
 
-	st, err := storage.Open(ctx, url, storage.Options{
+	store, err := storage.Open(ctx, url, storage.Options{
 		Endpoint:  s3Endpoint(),
 		PathStyle: true,
 	})
 	if err != nil {
 		t.Fatalf("storage.Open: %v", err)
 	}
-	return st
+	return store
 }
 
-// Helper: deterministic 64-hex blob hash from a label.
 func hashHex(label string) string {
 	sum := blake3.Sum256([]byte(label))
 	return hex.EncodeToString(sum[:])
@@ -78,7 +77,7 @@ func hashHex(label string) string {
 func TestS3Storage_RoundTrip(t *testing.T) {
 	requireIntegration(t)
 	ctx := context.Background()
-	st := setupS3Storage(ctx, t)
+	store := setupS3Storage(ctx, t)
 
 	cases := []struct {
 		name string
@@ -87,26 +86,26 @@ func TestS3Storage_RoundTrip(t *testing.T) {
 	}{
 		{
 			"blob",
-			func(k string, d []byte) error { return st.PutBlob(ctx, k, d) },
-			func(k string) ([]byte, error) { return st.GetBlob(ctx, k) },
+			func(key string, data []byte) error { return store.PutBlob(ctx, key, data) },
+			func(key string) ([]byte, error) { return store.GetBlob(ctx, key) },
 		},
 		{
 			"index",
-			func(k string, d []byte) error { return st.PutIndex(ctx, k, d) },
-			func(k string) ([]byte, error) { return st.GetIndex(ctx, k) },
+			func(key string, data []byte) error { return store.PutIndex(ctx, key, data) },
+			func(key string) ([]byte, error) { return store.GetIndex(ctx, key) },
 		},
 	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			key := hashHex(c.name + "-roundtrip") // also fine as a revision string
-			if c.name == "index" {
-				key = "rev-" + c.name + "-001"
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			key := hashHex(tc.name + "-roundtrip")
+			if tc.name == "index" {
+				key = "rev-" + tc.name + "-001"
 			}
-			payload := []byte("payload for " + c.name)
-			if err := c.put(key, payload); err != nil {
+			payload := []byte("payload for " + tc.name)
+			if err := tc.put(key, payload); err != nil {
 				t.Fatalf("put: %v", err)
 			}
-			got, err := c.get(key)
+			got, err := tc.get(key)
 			if err != nil {
 				t.Fatalf("get: %v", err)
 			}
@@ -120,10 +119,10 @@ func TestS3Storage_RoundTrip(t *testing.T) {
 func TestS3Storage_HasBlob(t *testing.T) {
 	requireIntegration(t)
 	ctx := context.Background()
-	st := setupS3Storage(ctx, t)
+	store := setupS3Storage(ctx, t)
 
-	h := hashHex("has-blob-fixture")
-	ok, err := st.HasBlob(ctx, h)
+	hash := hashHex("has-blob-fixture")
+	ok, err := store.HasBlob(ctx, hash)
 	if err != nil {
 		t.Fatalf("HasBlob (missing): %v", err)
 	}
@@ -131,10 +130,10 @@ func TestS3Storage_HasBlob(t *testing.T) {
 		t.Fatalf("HasBlob returned true for missing blob")
 	}
 
-	if err := st.PutBlob(ctx, h, []byte("x")); err != nil {
+	if err := store.PutBlob(ctx, hash, []byte("x")); err != nil {
 		t.Fatalf("PutBlob: %v", err)
 	}
-	ok, err = st.HasBlob(ctx, h)
+	ok, err = store.HasBlob(ctx, hash)
 	if err != nil {
 		t.Fatalf("HasBlob: %v", err)
 	}
@@ -146,13 +145,13 @@ func TestS3Storage_HasBlob(t *testing.T) {
 func TestS3Storage_NotFound(t *testing.T) {
 	requireIntegration(t)
 	ctx := context.Background()
-	st := setupS3Storage(ctx, t)
+	store := setupS3Storage(ctx, t)
 
-	_, err := st.GetBlob(ctx, hashHex("never-uploaded"))
+	_, err := store.GetBlob(ctx, hashHex("never-uploaded"))
 	if !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("GetBlob missing: want os.ErrNotExist wrap, got %v", err)
 	}
-	_, err = st.GetIndex(ctx, "rev-does-not-exist")
+	_, err = store.GetIndex(ctx, "rev-does-not-exist")
 	if !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("GetIndex missing: want os.ErrNotExist wrap, got %v", err)
 	}
@@ -161,22 +160,22 @@ func TestS3Storage_NotFound(t *testing.T) {
 func TestS3Storage_ListIndexRevisions(t *testing.T) {
 	requireIntegration(t)
 	ctx := context.Background()
-	st := setupS3Storage(ctx, t)
+	store := setupS3Storage(ctx, t)
 
 	revs := []string{"rev-list-001", "rev-list-002", "rev-list-003"}
-	for _, r := range revs {
-		if err := st.PutIndex(ctx, r, []byte("idx-"+r)); err != nil {
-			t.Fatalf("PutIndex %s: %v", r, err)
+	for _, rev := range revs {
+		if err := store.PutIndex(ctx, rev, []byte("idx-"+rev)); err != nil {
+			t.Fatalf("PutIndex %s: %v", rev, err)
 		}
 	}
 
-	got, err := st.ListIndexRevisions(ctx)
+	got, err := store.ListIndexRevisions(ctx)
 	if err != nil {
 		t.Fatalf("ListIndexRevisions: %v", err)
 	}
 	gotRevs := make([]string, len(got))
-	for i, o := range got {
-		gotRevs[i] = o.Revision
+	for i, obj := range got {
+		gotRevs[i] = obj.Revision
 	}
 	sort.Strings(gotRevs)
 	for i, want := range revs {

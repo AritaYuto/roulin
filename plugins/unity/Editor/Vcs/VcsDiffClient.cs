@@ -37,6 +37,19 @@ namespace Roulin.Editor.Vcs
                 raw?.base_bundle_names);
         }
 
+        // Uncommitted-only Unity paths. Used by Sync (hot-reload): committed
+        // changes are picked up by the next build, so Sync only cares about
+        // worktree edits still in flight. Hits the dedicated /uncommitted
+        // endpoint — /diff would waste time on committed-diff + Index parse
+        // that Sync never reads.
+        public async Task<IReadOnlyList<string>> FetchUncommittedAsync(CancellationToken ct = default)
+        {
+            var raw = await _server.GetUncommittedAsync(ct);
+            var projectRoot = Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
+            var gitRoot = FindGitRoot(projectRoot);
+            return VcsDiffPathNormalizer.Normalize(gitRoot, projectRoot, raw?.uncommitted);
+        }
+
         // Fallback (no .git found) returns startDir; the normaliser treats
         // that as "no prefix stripping".
         internal static string FindGitRoot(string startDir)

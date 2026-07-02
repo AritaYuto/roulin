@@ -1,6 +1,7 @@
 using System;
 using System.Linq;
 using System.Threading;
+using System.Threading.Tasks;
 using UnityEditor;
 using UnityEngine;
 
@@ -15,6 +16,7 @@ namespace Roulin.Editor.Sync
         private void OnEnable()
         {
             RoulinAssetWatcher.OnDirtyChanged += Repaint;
+            _ = RefreshAsync();
         }
 
         private void OnDisable()
@@ -41,7 +43,19 @@ namespace Roulin.Editor.Sync
 
             EditorGUILayout.Space(8);
             var dirty = RoulinAssetWatcher.Dirty.ToArray();
-            EditorGUILayout.LabelField($"Pending changes ({dirty.Length})", EditorStyles.boldLabel);
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                EditorGUILayout.LabelField(
+                    $"Pending changes ({dirty.Length})",
+                    EditorStyles.boldLabel);
+                using (new EditorGUI.DisabledScope(_cts != null))
+                {
+                    if (GUILayout.Button("Refresh", GUILayout.Width(70)))
+                    {
+                        _ = RefreshAsync();
+                    }
+                }
+            }
 
             using (var scope = new EditorGUILayout.ScrollViewScope(_scroll, GUILayout.MinHeight(120)))
             {
@@ -49,7 +63,7 @@ namespace Roulin.Editor.Sync
                 if (dirty.Length == 0)
                 {
                     EditorGUILayout.HelpBox(
-                        "Save an Addressables-managed asset to populate this list.",
+                        "No uncommitted, pack-rule-claimed assets. Edit an Addressables asset and Refresh.",
                         MessageType.Info);
                 }
                 else
@@ -101,9 +115,37 @@ namespace Roulin.Editor.Sync
         [MenuItem("Roulin/Sync")]
         public static void Open()
         {
-            var w = GetWindow<RoulinSyncWindow>("Roulin Sync");
-            w.minSize = new Vector2(420, 280);
-            w.Show();
+            var window = GetWindow<RoulinSyncWindow>("Roulin Sync");
+            window.minSize = new Vector2(420, 280);
+            window.Show();
+        }
+
+        private async Task RefreshAsync()
+        {
+            _cts = new CancellationTokenSource();
+            _status = "refreshing…";
+            Repaint();
+            try
+            {
+                await RoulinAssetWatcher.RefreshAsync(
+                    RoulinEditorSettings.instance.ServerUrl, _cts.Token);
+                _status = $"refreshed ({RoulinAssetWatcher.Dirty.Count} pending)";
+            }
+            catch (OperationCanceledException)
+            {
+                _status = "refresh cancelled";
+            }
+            catch (Exception ex)
+            {
+                _status = $"refresh failed: {ex.Message}";
+                Debug.LogException(ex);
+            }
+            finally
+            {
+                _cts?.Dispose();
+                _cts = null;
+                Repaint();
+            }
         }
 
         private async void Run(string[] paths)
@@ -116,16 +158,17 @@ namespace Roulin.Editor.Sync
                 var relayed = await RoulinSyncService.SyncAsync(
                     paths, RoulinEditorSettings.instance.ServerUrl, _cts.Token);
                 _status = $"synced {relayed} change(s) → server broadcast";
-                RoulinAssetWatcher.Clear();
+                await RoulinAssetWatcher.RefreshAsync(
+                    RoulinEditorSettings.instance.ServerUrl, _cts.Token);
             }
             catch (OperationCanceledException)
             {
                 _status = "cancelled";
             }
-            catch (Exception e)
+            catch (Exception ex)
             {
-                _status = $"failed: {e.Message}";
-                Debug.LogException(e);
+                _status = $"failed: {ex.Message}";
+                Debug.LogException(ex);
             }
             finally
             {

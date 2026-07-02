@@ -29,6 +29,7 @@ func New(rdStorage storage.Storage, writer *Writer, vcsAdapter vcs.VCSAdapter, p
 
 	if vcsAdapter != nil {
 		mux.HandleFunc("GET /diff", handleDiff(rdStorage, vcsAdapter))
+		mux.HandleFunc("GET /uncommitted", handleUncommitted(vcsAdapter))
 	}
 
 	if writer != nil {

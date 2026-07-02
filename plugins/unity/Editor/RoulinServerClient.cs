@@ -118,6 +118,22 @@ namespace Roulin.Editor
             return JsonUtility.FromJson<DiffResponse>(body);
         }
 
+        // Fetches only the worktree uncommitted paths. Sync uses this instead
+        // of GetDiffAsync: no Index parse, no committed base..HEAD diff → the
+        // server-side call is a single `git status`, sub-second on projects
+        // where /diff takes several seconds.
+        public async Task<UncommittedResponse> GetUncommittedAsync(CancellationToken ct = default)
+        {
+            var url = $"{_baseUrl}/uncommitted";
+            var (status, body) = await SendWithRetry(
+                () => new HttpRequestMessage(HttpMethod.Get, url), ct);
+            if ((int)status >= 400)
+            {
+                throw new Exception($"GET /uncommitted failed: {(int)status} {status}: {body}");
+            }
+            return JsonUtility.FromJson<UncommittedResponse>(body);
+        }
+
         // ---- retry plumbing -------------------------------------------------
 
         // Sends an HTTP request with up to MaxAttempts attempts. Retries on 5xx
@@ -211,6 +227,12 @@ namespace Roulin.Editor
             // but missing at base) that would otherwise slip past the
             // path-based dirty detection.
             public List<string> base_bundle_names;
+        }
+
+        [Serializable]
+        public sealed class UncommittedResponse
+        {
+            public List<string> uncommitted;
         }
     }
 }

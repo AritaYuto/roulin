@@ -1,4 +1,4 @@
-package roulin_test
+package vcs
 
 import (
 	"os"
@@ -6,17 +6,15 @@ import (
 	"path/filepath"
 	"sort"
 	"testing"
-
-	"github.com/KirisameMarisa/roulin/tools/roulin/internal/build/vcs"
 )
 
-func initGitRepo(t *testing.T) (*vcs.GitAdapter, string) {
+func initGitRepo(t *testing.T) (*GitAdapter, string) {
 	t.Helper()
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skipf("git not available: %v", err)
 	}
 	dir := t.TempDir()
-	g := &vcs.GitAdapter{WorkDir: dir}
+	adapter := &GitAdapter{WorkDir: dir}
 	mustGit(t, dir, "init", "-q", "-b", "main")
 	mustGit(t, dir, "config", "user.email", "test@example.com")
 	mustGit(t, dir, "config", "user.name", "test")
@@ -24,7 +22,7 @@ func initGitRepo(t *testing.T) (*vcs.GitAdapter, string) {
 	writeGitFile(t, dir, "seed.txt", "seed\n")
 	mustGit(t, dir, "add", "seed.txt")
 	mustGit(t, dir, "commit", "-q", "-m", "seed")
-	return g, dir
+	return adapter, dir
 }
 
 func mustGit(t *testing.T, dir string, args ...string) {
@@ -38,18 +36,18 @@ func mustGit(t *testing.T, dir string, args ...string) {
 
 func writeGitFile(t *testing.T, dir, name, body string) {
 	t.Helper()
-	p := filepath.Join(dir, name)
-	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+	path := filepath.Join(dir, name)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		t.Fatalf("write %s: %v", name, err)
 	}
 }
 
 func TestGitAdapter_CurrentRevision(t *testing.T) {
-	g, _ := initGitRepo(t)
-	rev, err := g.CurrentRevision()
+	adapter, _ := initGitRepo(t)
+	rev, err := adapter.CurrentRevision()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,8 +57,8 @@ func TestGitAdapter_CurrentRevision(t *testing.T) {
 }
 
 func TestGitAdapter_ChangedFilesBetweenCommits(t *testing.T) {
-	g, dir := initGitRepo(t)
-	base, err := g.CurrentRevision()
+	adapter, dir := initGitRepo(t)
+	base, err := adapter.CurrentRevision()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,7 +67,7 @@ func TestGitAdapter_ChangedFilesBetweenCommits(t *testing.T) {
 	mustGit(t, dir, "add", ".")
 	mustGit(t, dir, "commit", "-q", "-m", "add two files")
 
-	got, err := g.ChangedFiles(base)
+	got, err := adapter.ChangedFiles(base)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,8 +79,8 @@ func TestGitAdapter_ChangedFilesBetweenCommits(t *testing.T) {
 }
 
 func TestGitAdapter_ChangedFilesEmptySince(t *testing.T) {
-	g, _ := initGitRepo(t)
-	got, err := g.ChangedFiles("")
+	adapter, _ := initGitRepo(t)
+	got, err := adapter.ChangedFiles("")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,13 +90,13 @@ func TestGitAdapter_ChangedFilesEmptySince(t *testing.T) {
 }
 
 func TestGitAdapter_UncommittedFilesMixed(t *testing.T) {
-	g, dir := initGitRepo(t)
+	adapter, dir := initGitRepo(t)
 	writeGitFile(t, dir, "seed.txt", "seed-modified\n")
 	writeGitFile(t, dir, "Assets/new.png", "new")
 	writeGitFile(t, dir, "Assets/staged.mat", "staged")
 	mustGit(t, dir, "add", "Assets/staged.mat")
 
-	got, err := g.UncommittedFiles()
+	got, err := adapter.UncommittedFiles()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,8 +108,8 @@ func TestGitAdapter_UncommittedFilesMixed(t *testing.T) {
 }
 
 func TestGitAdapter_UncommittedFilesClean(t *testing.T) {
-	g, _ := initGitRepo(t)
-	got, err := g.UncommittedFiles()
+	adapter, _ := initGitRepo(t)
+	got, err := adapter.UncommittedFiles()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,19 +119,19 @@ func TestGitAdapter_UncommittedFilesClean(t *testing.T) {
 }
 
 func TestGitAdapter_UncommittedRenameReportsBothEndpoints(t *testing.T) {
-	g, dir := initGitRepo(t)
+	adapter, dir := initGitRepo(t)
 	writeGitFile(t, dir, "Assets/old.png", "image")
 	mustGit(t, dir, "add", "Assets/old.png")
 	mustGit(t, dir, "commit", "-q", "-m", "add old")
 	mustGit(t, dir, "mv", "Assets/old.png", "Assets/new.png")
 
-	got, err := g.UncommittedFiles()
+	got, err := adapter.UncommittedFiles()
 	if err != nil {
 		t.Fatal(err)
 	}
-	has := func(p string) bool {
-		for _, x := range got {
-			if x == p {
+	has := func(target string) bool {
+		for _, path := range got {
+			if path == target {
 				return true
 			}
 		}
@@ -145,7 +143,7 @@ func TestGitAdapter_UncommittedRenameReportsBothEndpoints(t *testing.T) {
 }
 
 func TestGitAdapter_PathspecsScopeUncommitted(t *testing.T) {
-	g, dir := initGitRepo(t)
+	adapter, dir := initGitRepo(t)
 	writeGitFile(t, dir, "client/proj/Assets/foo.png", "in-scope")
 	writeGitFile(t, dir, "tools/script.sh", "out-of-scope")
 	mustGit(t, dir, "add", ".")
@@ -155,8 +153,8 @@ func TestGitAdapter_PathspecsScopeUncommitted(t *testing.T) {
 	writeGitFile(t, dir, "client/proj/Assets/new.png", "in-scope-untracked")
 	writeGitFile(t, dir, "tools/other.sh", "out-of-scope-untracked")
 
-	g.Pathspecs = []string{"client/proj"}
-	got, err := g.UncommittedFiles()
+	adapter.Pathspecs = []string{"client/proj"}
+	got, err := adapter.UncommittedFiles()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -168,8 +166,8 @@ func TestGitAdapter_PathspecsScopeUncommitted(t *testing.T) {
 }
 
 func TestGitAdapter_PathspecsScopeChangedFiles(t *testing.T) {
-	g, dir := initGitRepo(t)
-	base, err := g.CurrentRevision()
+	adapter, dir := initGitRepo(t)
+	base, err := adapter.CurrentRevision()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -178,8 +176,8 @@ func TestGitAdapter_PathspecsScopeChangedFiles(t *testing.T) {
 	mustGit(t, dir, "add", ".")
 	mustGit(t, dir, "commit", "-q", "-m", "two commits")
 
-	g.Pathspecs = []string{"client/proj"}
-	got, err := g.ChangedFiles(base)
+	adapter.Pathspecs = []string{"client/proj"}
+	got, err := adapter.ChangedFiles(base)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -191,12 +189,12 @@ func TestGitAdapter_PathspecsScopeChangedFiles(t *testing.T) {
 }
 
 func TestGitAdapter_PathspecsEmptyAppliesNothing(t *testing.T) {
-	g, dir := initGitRepo(t)
+	adapter, dir := initGitRepo(t)
 	writeGitFile(t, dir, "seed.txt", "seed-modified\n")
 	writeGitFile(t, dir, "Assets/new.png", "new")
 
-	g.Pathspecs = nil
-	got, err := g.UncommittedFiles()
+	adapter.Pathspecs = nil
+	got, err := adapter.UncommittedFiles()
 	if err != nil {
 		t.Fatal(err)
 	}

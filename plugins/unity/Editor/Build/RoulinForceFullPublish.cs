@@ -40,7 +40,7 @@ namespace Roulin.Editor.Build
             return false;
         }
 
-        [MenuItem("Roulin/Force Full Publish on Next Build")]
+        [MenuItem("Roulin/BuildOptions/Force Full Publish on Next Build")]
         private static void Arm()
         {
             EditorPrefs.SetBool(PrefKey, true);
@@ -49,20 +49,20 @@ namespace Roulin.Editor.Build
                 "(base_revision omitted). Flag clears after one build.");
         }
 
-        [MenuItem("Roulin/Force Full Publish on Next Build", validate = true)]
+        [MenuItem("Roulin/BuildOptions/Force Full Publish on Next Build", validate = true)]
         private static bool ArmValidate()
         {
             return !EditorPrefs.GetBool(PrefKey, false);
         }
 
-        [MenuItem("Roulin/Cancel Force Full Publish")]
+        [MenuItem("Roulin/BuildOptions/Cancel Force Full Publish")]
         private static void Cancel()
         {
             EditorPrefs.DeleteKey(PrefKey);
             Debug.Log("[Roulin] Force-full-publish flag cleared.");
         }
 
-        [MenuItem("Roulin/Cancel Force Full Publish", validate = true)]
+        [MenuItem("Roulin/BuildOptions/Cancel Force Full Publish", validate = true)]
         private static bool CancelValidate()
         {
             return EditorPrefs.GetBool(PrefKey, false);

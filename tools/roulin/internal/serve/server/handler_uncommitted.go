@@ -1,0 +1,27 @@
+package server
+
+import (
+	"net/http"
+
+	"github.com/KirisameMarisa/roulin/tools/roulin/internal/build/vcs"
+)
+
+// UncommittedResponse carries only the worktree edits — a strict subset of
+// DiffResponse used by Sync (hot-reload). Sync doesn't need base_revision,
+// head_revision, or the committed base..HEAD diff, and those calls are
+// expensive (Index parse + git diff over many commits); this endpoint skips
+// them entirely.
+type UncommittedResponse struct {
+	Uncommitted []string `json:"uncommitted"`
+}
+
+func handleUncommitted(adapter vcs.VCSAdapter) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		uncommitted, err := adapter.UncommittedFiles()
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, "vcs_status", err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, UncommittedResponse{Uncommitted: uncommitted})
+	}
+}

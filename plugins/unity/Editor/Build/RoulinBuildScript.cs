@@ -41,13 +41,13 @@ namespace Roulin.Editor.Build
                 result.Duration = sw.Elapsed.TotalSeconds;
                 return (TResult)(object)result;
             }
-            catch (Exception e)
+            catch (Exception ex)
             {
-                Debug.LogException(e);
+                Debug.LogException(ex);
                 return (TResult)(object)new AddressablesPlayerBuildResult
                 {
                     Duration = sw.Elapsed.TotalSeconds,
-                    Error = e.Message
+                    Error = ex.Message
                 };
             }
             finally
@@ -61,19 +61,78 @@ namespace Roulin.Editor.Build
             var runBuildSw = Stopwatch.StartNew();
             var phaseMs = new List<(string Name, long Ms)>();
 
-            long markPhase(Stopwatch ps, string name)
+            T Phase<T>(string name, Func<T> body)
             {
-                ps.Stop();
-                var ms = ps.ElapsedMilliseconds;
-                phaseMs.Add((name, ms));
-                return ms;
+                var sw = Stopwatch.StartNew();
+                var result = body();
+                sw.Stop();
+                phaseMs.Add((name, sw.ElapsedMilliseconds));
+                return result;
+            }
+
+            void PhaseAction(string name, Action body)
+            {
+                var sw = Stopwatch.StartNew();
+                body();
+                sw.Stop();
+                phaseMs.Add((name, sw.ElapsedMilliseconds));
             }
 
             var aas = input.AddressableSettings;
             var settings = RoulinEditorSettings.instance;
             var serverUrl = settings.ServerUrl;
-            var bundleOutputDir = settings.BundleOutputDir;
+            var (revision, outputDir) = PrepareBuildContext(settings, serverUrl);
 
+            using var client = new RoulinServerClient(serverUrl);
+            var packRule = RoulinPackRuleRegistry.Resolve(aas);
+
+            PhaseAction("1. pack rule apply", () => RunPackRuleApply(packRule, aas));
+            var view = Phase("2. groups walk", () => AddressablesGroupsView.From(aas));
+            var diff = Phase("3. vcs diff", () => FetchDiff(client));
+
+            var forceFull = RoulinForceFullPublish.ConsumeForNextBuild();
+            if (forceFull)
+            {
+                Debug.Log("[RoulinBuild] force-full-publish armed → ignoring base revision");
+            }
+            var incremental = !forceFull && !string.IsNullOrEmpty(diff.BaseRevision) && packRule != null;
+
+            var changedBundles = Phase("4. changed bundles resolve",
+                () => ComputeChangedBundles(view, packRule, diff, forceFull, incremental));
+
+            var sbpInput = Phase("5. dep closure walk",
+                () => ComputeSbpInput(changedBundles, view, packRule, incremental));
+
+            var sbp = Phase(
+                "6. Scriptable Build Pipeline",
+                () => RunScriptableBuildPipeline(
+                    aas, outputDir, revision, diff, incremental,
+                    sbpInput.Builds, view, client, settings));
+
+
+            var report = BuildReport.Compose(serverUrl, revision, sbp.Catalog);
+            report.LogSummary(settings.Verbose);
+            var reportPath = report.WriteJson(outputDir);
+            Debug.Log($"[RoulinBuild] build report → {reportPath}");
+
+            EditorUtility.UnloadUnusedAssetsImmediate();
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+            GC.Collect();
+
+            runBuildSw.Stop();
+            sbp.TimingLogger.FlushSummary(runBuildSw.ElapsedMilliseconds, phaseMs);
+
+            return new AddressablesPlayerBuildResult
+            {
+                OutputPath = outputDir,
+                LocationCount = report.LocationCount
+            };
+        }
+
+        private static (string revision, string outputDir) PrepareBuildContext(
+            RoulinEditorSettings settings, string serverUrl)
+        {
             var revision = RoulinUtil.TryCommandLineArg("-roulinRevision");
             if (string.IsNullOrWhiteSpace(revision))
             {
@@ -89,135 +148,152 @@ namespace Roulin.Editor.Build
             }
             revision = revision.Trim();
 
-            var outputDir = Path.GetFullPath(bundleOutputDir);
+            var outputDir = Path.GetFullPath(settings.BundleOutputDir);
             Directory.CreateDirectory(outputDir);
 
             Debug.Log(
                 $"[RoulinBuild] start: server={serverUrl}, " +
                 $"revision={revision}, output={outputDir}");
+            return (revision, outputDir);
+        }
 
-            using var client = new RoulinServerClient(serverUrl);
+        private static void RunPackRuleApply(IRoulinPackRule packRule, AddressableAssetSettings aas)
+        {
+            if (!(packRule is IRoulinPackRuleApplier applier)) return;
+            var report = applier.Apply(aas);
+            Debug.Log(
+                $"[RoulinBuild] pack rule apply: " +
+                $"groups {report.GroupsCreated}+/{report.GroupsRemoved}- " +
+                $"entries {report.EntriesAdded}+/{report.EntriesRemoved}-/{report.EntriesMoved}~ " +
+                $"addresses {report.AddressesReassigned}~ " +
+                $"labels {report.LabelsChanged}~ " +
+                $"(touched {report.ModifiedGroupNames.Count} groups)");
+        }
 
-            var phaseSw = Stopwatch.StartNew();
-            var view = AddressablesGroupsView.From(aas);
-            var packRule = RoulinPackRuleRegistry.Resolve(aas);
-            markPhase(phaseSw, "1. groups walk");
+        // Snapshot of the /diff response Unity consumes for incremental build
+        // decisions. Empty BaseRevision means "no prior publish" → fall back
+        // to full rebuild.
+        private struct DiffSnapshot
+        {
+            public string BaseRevision;
+            public IReadOnlyList<string> DirtyUnityPaths;
+            public IReadOnlyList<string> BaseBundleNames;
+        }
 
-            // Ask the server which revision it considers "base", and which paths
-            // are dirty since that revision. We do NOT fetch the Index here:
-            // catalog merge is server-side, so Unity never reads the previous
-            // Index. If /diff fails or returns an empty revision, fall back
-            // to full publish (every bundle goes to SBP).
-            phaseSw = Stopwatch.StartNew();
-            string baseRevision = null;
-            IReadOnlyList<string> dirtyUnityPaths = Array.Empty<string>();
-            IReadOnlyList<string> baseBundleNames = Array.Empty<string>();
+        private static DiffSnapshot FetchDiff(RoulinServerClient client)
+        {
             try
             {
                 var vcsClient = new VcsDiffClient(client);
                 var diff = Task.Run(() => vcsClient.FetchProjectDiffAsync())
                     .GetAwaiter().GetResult();
-                baseRevision = diff.BaseRevision;
-                dirtyUnityPaths = diff.UnityPaths;
-                baseBundleNames = diff.BaseBundleNames;
                 Debug.Log(
-                    $"[RoulinBuild] /diff base={baseRevision ?? "(none)"}, " +
-                    $"dirty unity paths={dirtyUnityPaths.Count}, " +
-                    $"base bundle names={baseBundleNames.Count}");
+                    $"[RoulinBuild] /diff base={diff.BaseRevision ?? "(none)"}, " +
+                    $"dirty unity paths={diff.UnityPaths.Count}, " +
+                    $"base bundle names={diff.BaseBundleNames.Count}");
+                return new DiffSnapshot
+                {
+                    BaseRevision = diff.BaseRevision,
+                    DirtyUnityPaths = diff.UnityPaths,
+                    BaseBundleNames = diff.BaseBundleNames,
+                };
             }
             catch (Exception ex)
             {
-                Debug.LogWarning(
-                    $"[RoulinBuild] /diff unavailable ({ex.Message}) → full rebuild");
+                Debug.LogWarning($"[RoulinBuild] /diff unavailable ({ex.Message}) → full rebuild");
+                return new DiffSnapshot
+                {
+                    BaseRevision = null,
+                    DirtyUnityPaths = Array.Empty<string>(),
+                    BaseBundleNames = Array.Empty<string>(),
+                };
             }
-            markPhase(phaseSw, "1.5. vcs diff");
+        }
 
-            // Identify bundles to rebuild this revision: those owning a path
-            // in the dirty set (committed base_revision..HEAD + worktree edits).
-            // Plus the downward closure (every bundle they transitively depend on)
-            // so SBP can resolve cross-bundle refs without inlining the dep.
-            //
-            // If we have no base revision (or the user armed the force-full
-            // flag for schema migration), fall through to full rebuild =
-            // every walk bundle is considered changed; SBP input = full set;
-            // POST is a full publish.
-            phaseSw = Stopwatch.StartNew();
-            HashSet<string> changedBundles;
-            var forceFull = RoulinForceFullPublish.ConsumeForNextBuild();
-            if (forceFull)
-            {
-                Debug.Log("[RoulinBuild] force-full-publish armed → ignoring base revision");
-            }
-            if (packRule == null && !forceFull && !string.IsNullOrEmpty(baseRevision))
+        private static HashSet<string> ComputeChangedBundles(
+            AddressablesGroupsView view,
+            IRoulinPackRule packRule,
+            DiffSnapshot diff,
+            bool forceFull,
+            bool incremental)
+        {
+            if (packRule == null && !forceFull && !string.IsNullOrEmpty(diff.BaseRevision))
             {
                 Debug.LogWarning(
                     "[RoulinBuild] no IRoulinPackRule registered → falling back to full rebuild. " +
                     "Register a project-specific IRoulinPackRule via RoulinPackRuleRegistry to enable incremental builds.");
             }
-            var incremental = !forceFull && !string.IsNullOrEmpty(baseRevision) && packRule != null;
+
             if (!incremental)
             {
-                changedBundles = new HashSet<string>(
-                    view.BundleBuilds.Select(b => b.assetBundleName), StringComparer.Ordinal);
-                Debug.Log($"[RoulinBuild] full rebuild: {changedBundles.Count} bundles");
+                var full = new HashSet<string>(
+                    view.BundleBuilds.Select(bundle => bundle.assetBundleName),
+                    StringComparer.Ordinal);
+                Debug.Log($"[RoulinBuild] full rebuild: {full.Count} bundles");
+                return full;
             }
-            else
+
+            var changedBundles = new HashSet<string>(StringComparer.Ordinal);
+            if (diff.DirtyUnityPaths != null)
             {
-                changedBundles = new HashSet<string>(StringComparer.Ordinal);
-                if (dirtyUnityPaths != null)
+                var resolveSw = Stopwatch.StartNew();
+                var resolved = packRule.ResolveGroupsForPaths(diff.DirtyUnityPaths);
+                resolveSw.Stop();
+                foreach (var (path, groupName) in resolved)
                 {
-                    var resolveSw = Stopwatch.StartNew();
-                    var resolved = packRule.ResolveGroupsForPaths(dirtyUnityPaths);
-                    resolveSw.Stop();
-                    foreach (var kv in resolved)
-                    {
-                        var baseName = AddressablesGroupsView.SanitizeBundleName(kv.Value);
-                        var isScene = kv.Key.EndsWith(".unity", StringComparison.Ordinal);
-                        changedBundles.Add(isScene ? baseName + "_scenes" : baseName);
-                    }
-                    Debug.Log(
-                        $"[RoulinBuild] initial resolve: dirtyPaths={dirtyUnityPaths.Count} " +
-                        $"→ resolved={resolved.Count} paths → changedBundles={changedBundles.Count} " +
-                        $"({resolveSw.ElapsedMilliseconds}ms)");
+                    var baseName = AddressablesGroupsView.SanitizeBundleName(groupName);
+                    var isScene = path.EndsWith(".unity", StringComparison.Ordinal);
+                    changedBundles.Add(isScene ? baseName + "_scenes" : baseName);
                 }
+                Debug.Log(
+                    $"[RoulinBuild] initial resolve: dirtyPaths={diff.DirtyUnityPaths.Count} " +
+                    $"→ resolved={resolved.Count} paths → changedBundles={changedBundles.Count} " +
+                    $"({resolveSw.ElapsedMilliseconds}ms)");
+            }
 
-                // Force-mark bundles that exist in the current Addressables walk
-                // but not in base's Index. These are "new since base" — SBP
-                // must build them this time, otherwise the server-side merge
-                // rejects the parcel with "listed in all_bundle_names is
-                // neither in delta nor in base revision".
-                var baseNamesSet = new HashSet<string>(baseBundleNames, StringComparer.Ordinal);
-                var newBundleCount = 0;
-                foreach (var b in view.BundleBuilds)
+            // Force-mark bundles that exist in the current Addressables walk
+            // but not in base's Index. These are "new since base" — SBP must
+            // build them this time, otherwise the server-side merge rejects
+            // the parcel with "listed in all_bundle_names is neither in
+            // delta nor in base revision".
+            var baseNamesSet = new HashSet<string>(diff.BaseBundleNames, StringComparer.Ordinal);
+            var newBundleCount = 0;
+            foreach (var bundle in view.BundleBuilds)
+            {
+                if (!baseNamesSet.Contains(bundle.assetBundleName) && changedBundles.Add(bundle.assetBundleName))
                 {
-                    if (!baseNamesSet.Contains(b.assetBundleName)
-                        && changedBundles.Add(b.assetBundleName))
-                    {
-                        newBundleCount++;
-                    }
-                }
-                if (newBundleCount > 0)
-                {
-                    Debug.Log(
-                        $"[RoulinBuild] new bundles (in view, not in base): {newBundleCount}");
+                    newBundleCount++;
                 }
             }
-            markPhase(phaseSw, "1.6a. initial changed resolve");
+            if (newBundleCount > 0)
+            {
+                Debug.Log($"[RoulinBuild] new bundles (in view, not in base): {newBundleCount}");
+            }
+            return changedBundles;
+        }
 
-            // Full rebuild already covers every bundle, so no dep closure is
-            // needed (and packRule may be null in that path).
-            phaseSw = Stopwatch.StartNew();
+        private struct SbpInput
+        {
+            public HashSet<string> Names;
+            public List<AssetBundleBuild> Builds;
+        }
+
+        private static SbpInput ComputeSbpInput(
+            HashSet<string> changedBundles,
+            AddressablesGroupsView view,
+            IRoulinPackRule packRule,
+            bool incremental)
+        {
             var sbpInputNames = incremental
                 ? BundleDependencyResolver.Resolve(changedBundles, view.BundleBuilds, packRule)
                 : new HashSet<string>(changedBundles, StringComparer.Ordinal);
             var sbpInputBuilds = view.BundleBuilds
-                .Where(b => sbpInputNames.Contains(b.assetBundleName))
+                .Where(bundle => sbpInputNames.Contains(bundle.assetBundleName))
                 .ToList();
             Debug.Log(
                 $"[RoulinBuild] SBP input = {sbpInputBuilds.Count}/{view.BundleBuilds.Count} " +
                 $"(changed={changedBundles.Count}, +closure={sbpInputNames.Count - changedBundles.Count})");
 
-            // Cap-to-N detail log so single-file iterations are auditable.
             const int detailCap = 20;
             if (changedBundles.Count > 0 && changedBundles.Count <= detailCap)
             {
@@ -225,10 +301,29 @@ namespace Roulin.Editor.Build
                     $"[RoulinBuild]   changed bundles: " +
                     $"{string.Join(", ", changedBundles)}");
             }
-            markPhase(phaseSw, "1.6b. dep closure walk");
+            return new SbpInput { Names = sbpInputNames, Builds = sbpInputBuilds };
+        }
 
-            // Scriptable Build Pipeline runs over the closure subset only.
-            phaseSw = Stopwatch.StartNew();
+        // Return payload of the SBP phase. Catalog is what EmitBuildReport
+        // reads; TimingLogger is deferred until after post-phase cleanup so
+        // its FlushSummary can include the total runBuild elapsed time.
+        private struct SbpBuildResult
+        {
+            public RoulinCatalog Catalog;
+            public RoulinTimingBuildLogger TimingLogger;
+        }
+
+        private static SbpBuildResult RunScriptableBuildPipeline(
+            AddressableAssetSettings aas,
+            string outputDir,
+            string revision,
+            DiffSnapshot diff,
+            bool incremental,
+            List<AssetBundleBuild> sbpInputBuilds,
+            AddressablesGroupsView view,
+            RoulinServerClient client,
+            RoulinEditorSettings settings)
+        {
             var target = EditorUserBuildSettings.activeBuildTarget;
             var targetGroup = BuildPipeline.GetBuildTargetGroup(target);
 
@@ -238,8 +333,8 @@ namespace Roulin.Editor.Build
                 $"WriteLinkXML={buildParams.WriteLinkXML}, " +
                 $"CacheServerHost={buildParams.CacheServerHost ?? "(local)"}");
             var firstSchema = aas.groups
-                .Where(g => g != null && g.HasSchema<BundledAssetGroupSchema>())
-                .Select(g => g.GetSchema<BundledAssetGroupSchema>())
+                .Where(group => group != null && group.HasSchema<BundledAssetGroupSchema>())
+                .Select(group => group.GetSchema<BundledAssetGroupSchema>())
                 .FirstOrDefault();
             if (firstSchema != null)
             {
@@ -263,7 +358,6 @@ namespace Roulin.Editor.Build
             var buildTasks = DefaultBuildTasks.Create(
                 DefaultBuildTasks.Preset.AssetBundleShaderAndScriptExtraction);
 
-            // Per-concern SBP context objects (no shared mutable god-bag).
             var uploadResults = new BlobUploadResults();
             var catalog = new RoulinCatalog();
 
@@ -284,43 +378,22 @@ namespace Roulin.Editor.Build
             };
             if (incremental)
             {
-                publishParcel.BaseRevision = baseRevision;
+                publishParcel.BaseRevision = diff.BaseRevision;
             }
             buildTasks.Add(publishParcel);
 
-            var sbpTimingLogger = new RoulinTimingBuildLogger { EmitPerStepLog = settings.Verbose };
+            var timingLogger = new RoulinTimingBuildLogger { EmitPerStepLog = settings.Verbose };
 
             var rc = ContentPipeline.BuildAssetBundles(
                 buildParams, content, out var sbpResults, buildTasks,
-                sbpTimingLogger, view, uploadResults, catalog);
+                timingLogger, view, uploadResults, catalog);
             if (rc < ReturnCode.Success)
             {
                 throw new Exception($"ContentPipeline.BuildAssetBundles failed: {rc}");
             }
 
             Debug.Log($"[RoulinBuild] Scriptable Build Pipeline done ({sbpResults.BundleInfos.Count} bundle(s))");
-            markPhase(phaseSw, "2. Scriptable Build Pipeline ContentPipeline.BuildAssetBundles");
-
-            var report = BuildReport.Compose(serverUrl, revision, catalog);
-            report.LogSummary(settings.Verbose);
-            var reportPath = report.WriteJson(outputDir);
-            Debug.Log($"[RoulinBuild] build report → {reportPath}");
-
-            EditorUtility.UnloadUnusedAssetsImmediate();
-            GC.Collect();
-            GC.WaitForPendingFinalizers();
-            GC.Collect();
-
-            runBuildSw.Stop();
-            var runBuildMs = runBuildSw.ElapsedMilliseconds;
-            sbpTimingLogger.FlushSummary(runBuildMs, phaseMs);
-
-            return new AddressablesPlayerBuildResult
-            {
-                OutputPath = outputDir,
-                LocationCount = report.LocationCount
-            };
+            return new SbpBuildResult { Catalog = catalog, TimingLogger = timingLogger };
         }
-
     }
 }

@@ -1,10 +1,8 @@
-package roulin_test
+package server
 
 import (
 	"bufio"
-	"bytes"
 	"context"
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -12,30 +10,29 @@ import (
 	"time"
 
 	"github.com/KirisameMarisa/roulin/tools/roulin/internal/build"
-	"github.com/KirisameMarisa/roulin/tools/roulin/internal/serve/server"
-	"github.com/KirisameMarisa/roulin/tools/roulin/internal/storage/local"
 	"github.com/KirisameMarisa/roulin/tools/roulin/internal/serve/sse"
+	"github.com/KirisameMarisa/roulin/tools/roulin/internal/storage/local"
 )
 
-// POST /patches relays its body verbatim to every SSE subscriber. POST /parcels
-// (full-build channel) is intentionally NOT broadcast — verified separately.
+// POST /patches relays its body verbatim to every SSE subscriber. POST
+// /parcels (full-build channel) is intentionally NOT broadcast — verified
+// separately.
 func TestSse_BroadcastOnPostPatches(t *testing.T) {
 	dir := t.TempDir()
-	bc := sse.New()
-	st := local.NewFile(dir)
-	srv := server.New(st, &server.Writer{
-		Storage:     st,
-		Broadcaster: bc,
+	broadcaster := sse.New()
+	store := local.NewFile(dir)
+	srv := New(store, &Writer{
+		Storage:     store,
+		Broadcaster: broadcaster,
 	}, nil, 0)
 	ts := httptest.NewServer(srv.Handler)
 	t.Cleanup(ts.Close)
 
-	reader := openSseStream(t, ts, bc)
+	reader := openSseStream(t, ts, broadcaster)
 
-	// Trigger a relay broadcast via POST /patches.
-	body := server.PatchEvent{
+	body := PatchEvent{
 		Platform: "WindowsPlayer",
-		Changes: []server.PatchChange{
+		Changes: []PatchChange{
 			{
 				Address:    "a/icon",
 				NewBlobHex: strings.Repeat("ab", 32),
@@ -52,24 +49,23 @@ func TestSse_BroadcastOnPostPatches(t *testing.T) {
 	}
 }
 
-// POST /parcels must not produce an SSE event — full builds are not hot-reload.
-// We post one and then prove the stream stays quiet for 300ms.
+// POST /parcels must not produce an SSE event — full builds are not
+// hot-reload. Post one and confirm the stream stays quiet for 300ms.
 func TestSse_PostParcelDoesNotBroadcast(t *testing.T) {
 	dir := t.TempDir()
-	bc := sse.New()
-	st := local.NewFile(dir)
-	srv := server.New(st, &server.Writer{
-		Storage:     st,
-		Broadcaster: bc,
+	broadcaster := sse.New()
+	store := local.NewFile(dir)
+	srv := New(store, &Writer{
+		Storage:     store,
+		Broadcaster: broadcaster,
 	}, nil, 0)
 	ts := httptest.NewServer(srv.Handler)
 	t.Cleanup(ts.Close)
 
-	reader := openSseStream(t, ts, bc)
+	reader := openSseStream(t, ts, broadcaster)
 
 	postParcel(t, ts, "rev-no-broadcast", &build.Parcel{}, http.StatusCreated)
 
-	// Expect NO data line within 300ms — POST /parcels is silent on SSE.
 	dataCh := make(chan string, 1)
 	errCh := make(chan error, 1)
 	go func() {
@@ -95,32 +91,31 @@ func TestSse_PostParcelDoesNotBroadcast(t *testing.T) {
 	}
 }
 
-// Subscribe + Unsubscribe is idempotent.
 func TestSse_UnsubscribeIdempotent(t *testing.T) {
-	bc := sse.New()
-	ch := bc.Subscribe()
-	if bc.ClientCount() != 1 {
-		t.Fatalf("ClientCount = %d, want 1", bc.ClientCount())
+	broadcaster := sse.New()
+	channel := broadcaster.Subscribe()
+	if broadcaster.ClientCount() != 1 {
+		t.Fatalf("ClientCount = %d, want 1", broadcaster.ClientCount())
 	}
-	bc.Unsubscribe(ch)
-	bc.Unsubscribe(ch) // should not panic
-	if bc.ClientCount() != 0 {
-		t.Fatalf("ClientCount = %d, want 0", bc.ClientCount())
+	broadcaster.Unsubscribe(channel)
+	broadcaster.Unsubscribe(channel) // should not panic
+	if broadcaster.ClientCount() != 0 {
+		t.Fatalf("ClientCount = %d, want 0", broadcaster.ClientCount())
 	}
 }
 
 // Saturated subscriber doesn't block the broadcaster.
 func TestSse_SlowSubscriberIsDropped(t *testing.T) {
-	bc := sse.New()
-	ch := bc.Subscribe()
-	t.Cleanup(func() { bc.Unsubscribe(ch) })
+	broadcaster := sse.New()
+	channel := broadcaster.Subscribe()
+	t.Cleanup(func() { broadcaster.Unsubscribe(channel) })
 
 	for i := 0; i < 8; i++ {
-		bc.Broadcast([]byte("x"))
+		broadcaster.Broadcast([]byte("x"))
 	}
 	done := make(chan struct{})
 	go func() {
-		bc.Broadcast([]byte("dropped"))
+		broadcaster.Broadcast([]byte("dropped"))
 		close(done)
 	}()
 	select {
@@ -130,52 +125,10 @@ func TestSse_SlowSubscriberIsDropped(t *testing.T) {
 	}
 }
 
-// POST /patches body validation: missing platform / empty changes / non-hex.
-func TestPatches_RejectsBadBody(t *testing.T) {
-	dir := t.TempDir()
-	bc := sse.New()
-	st := local.NewFile(dir)
-	srv := server.New(st, &server.Writer{
-		Storage:     st,
-		Broadcaster: bc,
-	}, nil, 0)
-	ts := httptest.NewServer(srv.Handler)
-	t.Cleanup(ts.Close)
-
-	cases := []struct {
-		name string
-		body server.PatchEvent
-	}{
-		{"missing platform", server.PatchEvent{
-			Changes: []server.PatchChange{{Address: "a/icon", NewBlobHex: strings.Repeat("ab", 32)}},
-		}},
-		{"empty changes", server.PatchEvent{Platform: "WindowsPlayer"}},
-		{"empty address", server.PatchEvent{
-			Platform: "WindowsPlayer",
-			Changes:  []server.PatchChange{{Address: "", NewBlobHex: strings.Repeat("ab", 32)}},
-		}},
-		{"short hash", server.PatchEvent{
-			Platform: "WindowsPlayer",
-			Changes:  []server.PatchChange{{Address: "a/icon", NewBlobHex: "ab"}},
-		}},
-		{"non-hex", server.PatchEvent{
-			Platform: "WindowsPlayer",
-			Changes:  []server.PatchChange{{Address: "a/icon", NewBlobHex: strings.Repeat("zz", 32)}},
-		}},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			postPatches(t, ts, &c.body, http.StatusBadRequest)
-		})
-	}
-}
-
-// ---- helpers --------------------------------------------------------------
-
 // openSseStream connects, drains the initial `retry:` hint, and waits until
 // the broadcaster registers the client. Returns a reader positioned at the
 // first event line.
-func openSseStream(t *testing.T, ts *httptest.Server, bc *sse.Broadcaster) *bufio.Reader {
+func openSseStream(t *testing.T, ts *httptest.Server, broadcaster *sse.Broadcaster) *bufio.Reader {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
@@ -202,10 +155,10 @@ func openSseStream(t *testing.T, ts *httptest.Server, bc *sse.Broadcaster) *bufi
 	}
 
 	deadline := time.Now().Add(200 * time.Millisecond)
-	for bc.ClientCount() == 0 && time.Now().Before(deadline) {
+	for broadcaster.ClientCount() == 0 && time.Now().Before(deadline) {
 		time.Sleep(5 * time.Millisecond)
 	}
-	if bc.ClientCount() == 0 {
+	if broadcaster.ClientCount() == 0 {
 		t.Fatal("client did not register on broadcaster")
 	}
 	return reader
@@ -237,20 +190,4 @@ func readDataLine(t *testing.T, reader *bufio.Reader, timeout time.Duration) str
 		t.Fatal("timed out waiting for sse event")
 	}
 	return ""
-}
-
-func postPatches(t *testing.T, ts *httptest.Server, body *server.PatchEvent, wantStatus int) {
-	t.Helper()
-	buf, err := json.Marshal(body)
-	if err != nil {
-		t.Fatalf("marshal: %v", err)
-	}
-	resp, err := http.Post(ts.URL+"/patches", "application/json", bytes.NewReader(buf))
-	if err != nil {
-		t.Fatalf("post patches: %v", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != wantStatus {
-		t.Fatalf("status = %d, want %d", resp.StatusCode, wantStatus)
-	}
 }

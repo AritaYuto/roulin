@@ -24,9 +24,9 @@ namespace Roulin.Editor.Build
             if (packRule == null) throw new ArgumentNullException(nameof(packRule));
 
             var byName = new Dictionary<string, AssetBundleBuild>(allBuilds.Count);
-            foreach (var b in allBuilds)
+            foreach (var build in allBuilds)
             {
-                byName[b.assetBundleName] = b;
+                byName[build.assetBundleName] = build;
             }
 
             var visited = new HashSet<string>(bundleNames);
@@ -68,7 +68,7 @@ namespace Roulin.Editor.Build
                     swGetDeps.Start();
                     var depPaths = AssetDatabase.GetDependencies(assetPath, recursive: true);
                     swGetDeps.Stop();
-                    foreach (var d in depPaths) depPathsBuffer.Add(d);
+                    foreach (var depPath in depPaths) depPathsBuffer.Add(depPath);
                 }
                 depPathsSeen += depPathsBuffer.Count;
                 if (depPathsBuffer.Count == 0) continue;
@@ -78,9 +78,9 @@ namespace Roulin.Editor.Build
                 swResolve.Start();
                 var resolved = packRule.ResolveGroupsForPaths(depPathsBuffer);
                 swResolve.Stop();
-                foreach (var kv in resolved)
+                foreach (var (depPath, groupName) in resolved)
                 {
-                    var depBundle = ToBundleName(kv.Value, kv.Key);
+                    var depBundle = ToBundleName(groupName, depPath);
                     if (depBundle == null) continue;
                     if (visited.Add(depBundle))
                     {
