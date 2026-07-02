@@ -12,14 +12,13 @@ import (
 	"github.com/KirisameMarisa/roulin/tools/roulin/internal/storage"
 )
 
-// handlePostParcel decodes a JSON Parcel and writes the FlatBuffers Index for
-// the revision. Referenced blobs must already be uploaded via POST /blobs.
+// handlePostParcel decodes a JSON Parcel and writes the Index for the revision.
+// Referenced blobs must be uploaded via POST /blobs first.
 //
-// Two modes (see Parcel doc):
-//   - Full publish: Parcel.Bundles[] covers every bundle in the new revision.
-//   - Incremental: Parcel.BaseRevision + Parcel.AllBundleNames are set, and
-//     Bundles[] holds only the bundles this build regenerated. The server
-//     merges the delta with the base revision's stored Index.
+// Modes:
+//   - Full publish: Bundles[] covers every bundle in the new revision.
+//   - Incremental: BaseRevision + AllBundleNames set, Bundles[] is the delta only.
+//     Server merges it into the base revision's Index.
 func handlePostParcel(s storage.Storage) http.HandlerFunc {
 	return func(rw http.ResponseWriter, r *http.Request) {
 		revision := r.PathValue("revision")
