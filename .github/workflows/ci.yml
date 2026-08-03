@@ -119,7 +119,7 @@ jobs:
 
       - name: Run integration tests
         working-directory: tools/roulin
-        run: go test -v ./test/...
+        run: go test -v ./internal/storage/cloud/...
         env:
           ROULIN_INTEGRATION:         "1"
           AWS_ACCESS_KEY_ID:           minioadmin
