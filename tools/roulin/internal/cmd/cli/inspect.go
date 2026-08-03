@@ -18,11 +18,7 @@ import (
 var inspectParcelCmd = &cobra.Command{
 	Use:   "inspect-parcel",
 	Short: "Walk a Parcel on a roulin-server and display its contents",
-	Long: `Fetches /index/{revision} and each referenced BundleIndex blob via
-/blobs/<h[:2]>/<h>, then prints a human-readable summary (or JSON with --json).
-
-Useful for verifying what RoulinBuildScript actually deployed without
-needing roulin-core / FlatBuffers tooling.
+	Long: `Fetches /index/{revision} and the referenced blobs, then prints a text summary (or JSON with --json).
 
 Example:
   roulin-cli inspect-parcel --base-url http://localhost:8765 --revision 5463184abc...`,

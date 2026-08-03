@@ -51,10 +51,8 @@ var rootCmd = &cobra.Command{
 var serveCmd = &cobra.Command{
 	Use:   "serve",
 	Short: "Start the local asset server",
-	Long: `Start an HTTP/2 server backed by an object store (S3 or S3-compatible).
-
-The server is a stateless bypass to the configured storage URL — POST writes
-go directly to the store, GET reads pass through with an optional in-memory cache.`,
+	Long: `HTTP/2 server backed by an S3-compatible object store.
+Stateless: POST writes pass through, GET reads go via the optional cache.`,
 	RunE: runServe,
 }
 

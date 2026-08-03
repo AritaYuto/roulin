@@ -74,7 +74,6 @@ Open **Project Settings → Roulin**:
 | **Server URL** | roulin-server base URL (e.g. `http://localhost:8765`) |
 | **Manual Revision** | Leave empty to use `git rev-parse HEAD` automatically |
 | **Bundle Output Dir** | Intermediate `.bundle` output directory (default: `Library/roulin/build`) |
-| **Enable blob_meta capture** | Captures dependency data per bundle; warm rebuilds skip unchanged bundles |
 | **Verbose logging** | Per-bundle detail logs. Off = aggregate summary only |
 
 ### Build

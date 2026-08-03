@@ -62,16 +62,21 @@ namespace Roulin.Editor.Build.CustomBuildTasks
         {
             var sink = (BlobUploadResults)_uploadResults;
             var counters = new Counters();
-            var total = _sbpResults.BundleInfos.Count;
 
             using var srcToken = new CancellationTokenSource();
             using var sem = new SemaphoreSlim(0);
             using var throttle = new SemaphoreSlim(MaxParallel, MaxParallel);
-            var tasks = new List<Task>(total);
+            var tasks = new List<Task>(_sbpResults.BundleInfos.Count);
 
             foreach (var kv in _sbpResults.BundleInfos)
             {
                 var bundleName = kv.Key;
+                // Proxy bundle carrying RoulinUnityBuiltIns; drives SBP's
+                // dep walk for the SBP-generated bundles but must not ship.
+                if (bundleName == RoulinUnityBuiltIns.BundleName)
+                {
+                    continue;
+                }
                 var fileName = kv.Value.FileName;
                 tasks.Add(Task.Run(async () =>
                 {
@@ -87,6 +92,7 @@ namespace Roulin.Editor.Build.CustomBuildTasks
                     }
                 }, srcToken.Token));
             }
+            var total = tasks.Count;
 
             for (int i = 0; i < total; i++)
             {

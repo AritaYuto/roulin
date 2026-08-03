@@ -9,15 +9,13 @@ import (
 	"github.com/KirisameMarisa/roulin/tools/roulin/internal/device"
 )
 
-const hostPairPort = 12766
+const hostPairPort = 12765
 const sendDeadline = time.Second
 
 var watchCmd = &cobra.Command{
 	Use:   "watch",
 	Short: "Watch for pair targets and auto-pair with roulin-server",
-	Long: `Continuously polls for pair targets (USB-connected iOS/Android
-devices and the host loopback for engine editors / standalone PC builds) and
-sends the roulin-server address whenever a target appears or restarts.
+	Long: `Targets: iOS/Android USB devices + host loopback (Unity Editor, PC builds).
 
 Requires:
   iOS:     iproxy + idevice_id  (brew install libimobiledevice)

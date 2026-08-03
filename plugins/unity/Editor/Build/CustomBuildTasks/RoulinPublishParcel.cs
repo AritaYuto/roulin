@@ -11,10 +11,7 @@ using Debug = UnityEngine.Debug;
 
 namespace Roulin.Editor.Build.CustomBuildTasks
 {
-    // Builds the RoulinCatalog from the read-only inputs that earlier tasks
-    // (and the View) produced, serialises to the wire Parcel, and POSTs it.
-    // This is the only task that knows about the catalog as a coherent
-    // structure — the rest just contribute slices of data.
+    // Assembles the RoulinCatalog and POSTs the parcel.
     internal sealed class RoulinPublishParcel : IBuildTask
     {
 #pragma warning disable 649
@@ -30,22 +27,26 @@ namespace Roulin.Editor.Build.CustomBuildTasks
         [InjectContext(ContextUsage.In)]
         private IBlobUploadResults _uploadResults;
 
-        // Output: catalog the task assembles. The instance is constructed by
-        // RoulinBuildScript and passed in as a SBP context object; this task
-        // fills it. Lets BuildReport (running outside the pipeline) read the
-        // same data without recomputing dep closure.
+        // Constructed by RoulinBuildScript, filled here, read by BuildReport.
         [InjectContext(ContextUsage.In)]
         private RoulinCatalog _catalog;
 #pragma warning restore 649
 
         public int Version => 1;
 
+        // Hardcoded by SBP's DefaultBuildTasks; stable across the versions we target.
+        private const string SbpMonoScriptsBundleName    = "UnityMonoScripts.bundle";
+        private const string SbpBuiltInShadersBundleName = "UnityBuiltInShaders.bundle";
+
         public RoulinServerClient Server { get; set; }
         public string Revision { get; set; }
 
-        // Set to the server's idea of the base revision (from GetDiff response)
-        // to publish incrementally. Leave null/empty for a full publish.
+        // Base revision from GetDiff. Null/empty → full publish.
         public string BaseRevision { get; set; }
+
+        // Bundle names in the base revision's Index.
+        // Carries SBP-generated names across incrementals so the server merge doesn't drop them.
+        public IReadOnlyList<string> BaseBundleNames { get; set; }
 
         public ReturnCode Run()
         {
@@ -67,19 +68,35 @@ namespace Roulin.Editor.Build.CustomBuildTasks
             if (incremental)
             {
                 parcel.base_revision = BaseRevision;
-                // The set of bundle names that should exist in the new revision:
-                // every bundle the Addressables walk produced + every bundle SBP
-                // synthesised (UnityBuiltInShaders.bundle / UnityMonoScripts.bundle).
-                // Server drops base entries not in this set, so omitting the
-                // synthesised ones would lose them across revisions.
+                // Names that should exist in the new revision. Server drops any base
+                // entry not listed here, so include SBP-generated bundles too.
                 var allNames = new HashSet<string>(StringComparer.Ordinal);
-                foreach (var b in _view.BundleBuilds)
+                foreach (var bundleBuild in _view.BundleBuilds)
                 {
-                    allNames.Add(b.assetBundleName);
+                    allNames.Add(bundleBuild.assetBundleName);
                 }
-                foreach (var kv in _sbpResults.BundleInfos)
+                foreach (var (name, _) in _sbpResults.BundleInfos)
                 {
-                    allNames.Add(kv.Key);
+                    // Build-time proxy; never ship.
+                    if (name == RoulinUnityBuiltIns.BundleName)
+                    {
+                        continue;
+                    }
+                    allNames.Add(name);
+                }
+                // Keep the SBP-generated names alive whenever base has them so
+                // other bundles' Deps to them don't dangle after merge.
+                if (BaseBundleNames != null)
+                {
+                    var baseNameSet = new HashSet<string>(BaseBundleNames, StringComparer.Ordinal);
+                    if (baseNameSet.Contains(SbpMonoScriptsBundleName))
+                    {
+                        allNames.Add(SbpMonoScriptsBundleName);
+                    }
+                    if (baseNameSet.Contains(SbpBuiltInShadersBundleName))
+                    {
+                        allNames.Add(SbpBuiltInShadersBundleName);
+                    }
                 }
                 parcel.all_bundle_names = new List<string>(allNames);
             }
@@ -96,9 +113,7 @@ namespace Roulin.Editor.Build.CustomBuildTasks
             return ReturnCode.Success;
         }
 
-        // Assemble the in-memory RoulinCatalog from the SBP-built bundle set
-        // + per-bundle blob upload result + Addressables-side entries +
-        // SBP-derived dep closure.
+        // SBP bundle set + upload results + view entries + dep closure → catalog.
         private void PopulateCatalog(RoulinCatalog catalog)
         {
             var depClosure = RoulinBundleDepClosure.Compute(
@@ -108,6 +123,11 @@ namespace Roulin.Editor.Build.CustomBuildTasks
             foreach (var kv in _sbpResults.BundleInfos)
             {
                 var name = kv.Key;
+                // Build-time proxy; RoulinPublishBlobs skipped it, no upload result exists.
+                if (name == RoulinUnityBuiltIns.BundleName)
+                {
+                    continue;
+                }
                 if (!_uploadResults.TryGet(name, out var hash, out var size))
                 {
                     throw new InvalidOperationException(
@@ -140,9 +160,7 @@ namespace Roulin.Editor.Build.CustomBuildTasks
         }
     }
 
-    // Dep closure derived from SBP's IBundleWriteData. Computes per-bundle
-    // (immediate + expanded) dep bundle names. Pure transform — no SBP state
-    // mutation, no global side effects.
+    // Per-bundle dep closure (immediate + expanded) from SBP's IBundleWriteData.
     internal static class RoulinBundleDepClosure
     {
         public static Result Compute(

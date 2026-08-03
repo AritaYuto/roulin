@@ -86,48 +86,79 @@ namespace Roulin.Editor.Build
             using var client = new RoulinServerClient(serverUrl);
             var packRule = RoulinPackRuleRegistry.Resolve(aas);
 
-            PhaseAction("1. pack rule apply", () => RunPackRuleApply(packRule, aas));
-            var view = Phase("2. groups walk", () => AddressablesGroupsView.From(aas));
-            var diff = Phase("3. vcs diff", () => FetchDiff(client));
+            // Defense against a previous crashed build leaving the asset behind.
+            RoulinUnityBuiltInsIO.DeleteAssetIfExists();
 
-            var forceFull = RoulinForceFullPublish.ConsumeForNextBuild();
-            if (forceFull)
+            try
             {
-                Debug.Log("[RoulinBuild] force-full-publish armed → ignoring base revision");
+                PhaseAction("pack rule apply", () => RunPackRuleApply(packRule, aas));
+                var view = Phase("groups walk", () => AddressablesGroupsView.From(aas));
+                var diff = Phase("vcs diff", () => FetchDiff(client));
+
+                var forceFull = RoulinForceFullPublish.ConsumeForNextBuild();
+                if (forceFull)
+                {
+                    Debug.Log("[RoulinBuild] force-full-publish armed → ignoring base revision");
+                }
+                var incremental = !forceFull && !string.IsNullOrEmpty(diff.BaseRevision) && packRule != null;
+
+                var changedBundles = Phase("changed bundles resolve",
+                    () => ComputeChangedBundles(view, packRule, diff, forceFull, incremental));
+
+                var sbpInput = Phase("dep closure walk",
+                    () => ComputeSbpInput(changedBundles, view, packRule, incremental));
+
+                if (incremental)
+                {
+                    PhaseAction("RoulinUnityBuiltIns asset create", () =>
+                    {
+                        var populated = RoulinUnityBuiltInsIO.CreateFresh();
+                        sbpInput.Builds.Add(new AssetBundleBuild
+                        {
+                            assetBundleName  = RoulinUnityBuiltIns.BundleName,
+                            assetNames       = new[] { RoulinUnityBuiltIns.AssetPath },
+                            addressableNames = new[] { RoulinUnityBuiltIns.AssetPath },
+                        });
+                        Debug.Log(
+                            $"[RoulinBuild] RoulinUnityBuiltIns asset created: " +
+                            $"MonoScripts={populated.MonoScriptCount}, " +
+                            $"BuiltInShaders={populated.BuiltInShaderCount}, " +
+                            $"bundle '{RoulinUnityBuiltIns.BundleName}' " +
+                            $"added to SBP input");
+                    });
+                }
+
+                var sbp = Phase(
+                    "Scriptable Build Pipeline",
+                    () => RunScriptableBuildPipeline(
+                        aas, outputDir, revision, diff, incremental,
+                        sbpInput.Builds, view, client, settings));
+
+
+                var report = BuildReport.Compose(serverUrl, revision, sbp.Catalog);
+                report.LogSummary(settings.Verbose);
+                var reportPath = report.WriteJson(outputDir);
+                Debug.Log($"[RoulinBuild] build report → {reportPath}");
+
+                EditorUtility.UnloadUnusedAssetsImmediate();
+                GC.Collect();
+                GC.WaitForPendingFinalizers();
+                GC.Collect();
+
+                runBuildSw.Stop();
+                sbp.TimingLogger.FlushSummary(runBuildSw.ElapsedMilliseconds, phaseMs);
+
+                return new AddressablesPlayerBuildResult
+                {
+                    OutputPath = outputDir,
+                    LocationCount = report.LocationCount
+                };
             }
-            var incremental = !forceFull && !string.IsNullOrEmpty(diff.BaseRevision) && packRule != null;
-
-            var changedBundles = Phase("4. changed bundles resolve",
-                () => ComputeChangedBundles(view, packRule, diff, forceFull, incremental));
-
-            var sbpInput = Phase("5. dep closure walk",
-                () => ComputeSbpInput(changedBundles, view, packRule, incremental));
-
-            var sbp = Phase(
-                "6. Scriptable Build Pipeline",
-                () => RunScriptableBuildPipeline(
-                    aas, outputDir, revision, diff, incremental,
-                    sbpInput.Builds, view, client, settings));
-
-
-            var report = BuildReport.Compose(serverUrl, revision, sbp.Catalog);
-            report.LogSummary(settings.Verbose);
-            var reportPath = report.WriteJson(outputDir);
-            Debug.Log($"[RoulinBuild] build report → {reportPath}");
-
-            EditorUtility.UnloadUnusedAssetsImmediate();
-            GC.Collect();
-            GC.WaitForPendingFinalizers();
-            GC.Collect();
-
-            runBuildSw.Stop();
-            sbp.TimingLogger.FlushSummary(runBuildSw.ElapsedMilliseconds, phaseMs);
-
-            return new AddressablesPlayerBuildResult
+            finally
             {
-                OutputPath = outputDir,
-                LocationCount = report.LocationCount
-            };
+                // Cleans up even if incremental=false or CreateFresh threw.
+                RoulinUnityBuiltInsIO.DeleteAssetIfExists();
+            }
         }
 
         private static (string revision, string outputDir) PrepareBuildContext(
@@ -170,9 +201,7 @@ namespace Roulin.Editor.Build
                 $"(touched {report.ModifiedGroupNames.Count} groups)");
         }
 
-        // Snapshot of the /diff response Unity consumes for incremental build
-        // decisions. Empty BaseRevision means "no prior publish" → fall back
-        // to full rebuild.
+        // Empty BaseRevision = no prior publish → full rebuild.
         private struct DiffSnapshot
         {
             public string BaseRevision;
@@ -251,11 +280,7 @@ namespace Roulin.Editor.Build
                     $"({resolveSw.ElapsedMilliseconds}ms)");
             }
 
-            // Force-mark bundles that exist in the current Addressables walk
-            // but not in base's Index. These are "new since base" — SBP must
-            // build them this time, otherwise the server-side merge rejects
-            // the parcel with "listed in all_bundle_names is neither in
-            // delta nor in base revision".
+            // Bundles absent from base must be built; server-side merge rejects parcels that list them otherwise.
             var baseNamesSet = new HashSet<string>(diff.BaseBundleNames, StringComparer.Ordinal);
             var newBundleCount = 0;
             foreach (var bundle in view.BundleBuilds)
@@ -304,9 +329,7 @@ namespace Roulin.Editor.Build
             return new SbpInput { Names = sbpInputNames, Builds = sbpInputBuilds };
         }
 
-        // Return payload of the SBP phase. Catalog is what EmitBuildReport
-        // reads; TimingLogger is deferred until after post-phase cleanup so
-        // its FlushSummary can include the total runBuild elapsed time.
+        // TimingLogger deferred so FlushSummary captures total runBuild elapsed time.
         private struct SbpBuildResult
         {
             public RoulinCatalog Catalog;
@@ -352,9 +375,7 @@ namespace Roulin.Editor.Build
 
             Debug.Log($"[RoulinBuild] running Scriptable Build Pipeline for target={target}, group={targetGroup}…");
 
-            // Shader/script extraction adds CreateBuiltInShadersBundle +
-            // CreateMonoScriptBundle. Without it materials using built-in
-            // shaders render pink at runtime.
+            // Without shader extraction, built-in shader materials render pink at runtime.
             var buildTasks = DefaultBuildTasks.Create(
                 DefaultBuildTasks.Preset.AssetBundleShaderAndScriptExtraction);
 
@@ -368,9 +389,7 @@ namespace Roulin.Editor.Build
                 Verbose = settings.Verbose
             });
 
-            // Hand the parcel publisher the base revision. The publisher itself
-            // computes all_bundle_names at run time from view + SBP-synthesised
-            // results (so built-in bundles aren't dropped by the server merge).
+            // BaseBundleNames fallback prevents losing SBP-generated bundle names when SBP produces 0 bundles.
             var publishParcel = new RoulinPublishParcel
             {
                 Server = client,
@@ -379,6 +398,7 @@ namespace Roulin.Editor.Build
             if (incremental)
             {
                 publishParcel.BaseRevision = diff.BaseRevision;
+                publishParcel.BaseBundleNames = diff.BaseBundleNames;
             }
             buildTasks.Add(publishParcel);
 

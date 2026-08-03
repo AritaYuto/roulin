@@ -2,6 +2,7 @@
   "name": "Roulin.Editor",
   "rootNamespace": "Roulin.Editor",
   "references": [
+    "Roulin",
     "Unity.Addressables",
     "Unity.Addressables.Editor",
     "Unity.ResourceManager",

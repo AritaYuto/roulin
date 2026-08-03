@@ -81,6 +81,11 @@ func handlePostParcel(s storage.Storage) http.HandlerFunc {
 			idxBytes = full
 		}
 
+		if err := build.ValidateIndexBytes(idxBytes); err != nil {
+			writeErr(rw, http.StatusBadRequest, "catalog_dangling_dep", err.Error())
+			return
+		}
+
 		if err := s.PutIndex(r.Context(), revision, idxBytes); err != nil {
 			slog.Error("storage.PutIndex failed", "rev", revision, "err", err)
 			writeErr(rw, http.StatusInternalServerError, "put_index", err.Error())
